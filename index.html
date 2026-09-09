@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Material-Aufmaß</title>
+<meta name="theme-color" content="#152238">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Aufmaß">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="header-inner">
+    <button id="btnBack" class="icon-btn" hidden aria-label="Zurück">←</button>
+    <h1 id="headerTitle">Material-Aufmaß</h1>
+    <button id="btnNew" class="icon-btn" aria-label="Neues Aufmaß">＋</button>
+  </div>
+</header>
+
+<main id="app"></main>
+
+<!-- Vorlage: Übersicht -->
+<template id="tpl-uebersicht">
+  <section class="view">
+    <div id="listeLeer" class="empty-state" hidden>
+      <p>Noch kein Aufmaß erfasst.</p>
+      <button class="btn btn-primary" data-action="new">Erstes Aufmaß anlegen</button>
+    </div>
+    <ul id="aufmassListe" class="card-list"></ul>
+  </section>
+</template>
+
+<!-- Vorlage: Formular -->
+<template id="tpl-formular">
+  <section class="view">
+    <details class="section-card" open>
+      <summary>Kunde &amp; Baustelle</summary>
+      <div class="field-grid">
+        <label>Kunde / Firma
+          <input type="text" id="f_kundeName" placeholder="z. B. Mustermann GmbH">
+        </label>
+        <label>Ansprechpartner
+          <input type="text" id="f_ansprechpartner" placeholder="optional">
+        </label>
+        <label>Straße, Nr.
+          <input type="text" id="f_strasse" placeholder="optional">
+        </label>
+        <label>PLZ, Ort
+          <input type="text" id="f_plzOrt" placeholder="optional">
+        </label>
+        <label>Telefon
+          <input type="tel" id="f_telefon" placeholder="optional">
+        </label>
+        <label>Baustelle / Bauvorhaben
+          <input type="text" id="f_baustelle" placeholder="falls abweichend von Adresse">
+        </label>
+      </div>
+    </details>
+
+    <details class="section-card" open>
+      <summary>Datum &amp; Arbeitsbeschreibung</summary>
+      <div class="field-grid">
+        <label>Datum
+          <input type="date" id="f_datum">
+        </label>
+      </div>
+      <label class="full">Arbeitsbeschreibung
+        <textarea id="f_arbeitsbeschreibung" rows="3" placeholder="Was wurde / wird ausgeführt?"></textarea>
+      </label>
+    </details>
+
+    <details class="section-card" open>
+      <summary>Material hinzufügen</summary>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="liste" role="tab">Aus Liste</button>
+        <button class="tab" data-tab="frei" role="tab">Freitext</button>
+      </div>
+
+      <div id="tabListe" class="tab-panel">
+        <div class="autocomplete">
+          <input type="text" id="f_suche" placeholder="Artikel suchen (Name oder Art.-Nr.)" autocomplete="off">
+          <ul id="sucheErgebnisse" class="suggest-list" hidden></ul>
+        </div>
+        <div id="ausgewaehlterArtikel" class="selected-article" hidden></div>
+        <div class="field-grid two-col">
+          <label>Menge
+            <input type="number" id="f_mengeListe" step="any" min="0" inputmode="decimal">
+          </label>
+          <label>Einheit
+            <input type="text" id="f_einheitListe" readonly>
+          </label>
+        </div>
+        <button class="btn btn-secondary" id="btnAddListe" disabled>Hinzufügen</button>
+      </div>
+
+      <div id="tabFrei" class="tab-panel" hidden>
+        <label class="full">Bezeichnung
+          <input type="text" id="f_bezeichnungFrei" placeholder="z. B. Verlegerohr M25 grau">
+        </label>
+        <div class="field-grid two-col">
+          <label>Menge
+            <input type="number" id="f_mengeFrei" step="any" min="0" inputmode="decimal">
+          </label>
+          <label>Einheit
+            <input type="text" id="f_einheitFrei" placeholder="Stk, m, ...">
+          </label>
+        </div>
+        <button class="btn btn-secondary" id="btnAddFrei">Hinzufügen</button>
+      </div>
+    </details>
+
+    <details class="section-card" open>
+      <summary>Materialliste (<span id="anzahlPositionen">0</span>)</summary>
+      <div class="table-scroll">
+        <table id="materialTabelle">
+          <thead>
+            <tr>
+              <th>Bezeichnung</th>
+              <th>Menge</th>
+              <th>Einh.</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="materialTbody"></tbody>
+        </table>
+      </div>
+      <p id="materialLeerHinweis" class="hint" hidden>Noch kein Material erfasst.</p>
+    </details>
+
+    <div class="action-bar">
+      <button class="btn btn-outline" id="btnLoeschen" hidden>Aufmaß löschen</button>
+      <button class="btn btn-primary" id="btnPdf">Als PDF exportieren</button>
+    </div>
+    <p class="autosave-hint">Änderungen werden automatisch gespeichert.</p>
+  </section>
+</template>
+
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/jspdf.plugin.autotable.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

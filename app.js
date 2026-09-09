@@ -1,0 +1,541 @@
+"use strict";
+
+/* ============================================================
+   Material-Aufmaß App
+   Speicherung: localStorage (rein lokal auf dem Gerät)
+   Materialstamm: materials.json (aus DATANORM erzeugt)
+   ============================================================ */
+
+const STORAGE_KEY = "aufmass_v1_liste";
+const app = document.getElementById("app");
+const headerTitle = document.getElementById("headerTitle");
+const btnBack = document.getElementById("btnBack");
+const btnNew = document.getElementById("btnNew");
+
+let aufmassListe = [];      // alle gespeicherten Aufmaße
+let currentAufmass = null;  // aktuell im Formular geöffnetes Aufmaß
+let materialDB = [];        // Materialstamm aus materials.json
+let materialDBReady = false;
+let selectedArtikel = null; // aktuell in der Autocomplete gewähltes Listenmaterial
+let saveTimer = null;
+
+/* ---------- Storage ---------- */
+
+function ladeListe() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    aufmassListe = raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.error("Fehler beim Laden der gespeicherten Aufmaße", e);
+    aufmassListe = [];
+  }
+}
+
+function speichereListe() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(aufmassListe));
+  } catch (e) {
+    console.error("Fehler beim Speichern", e);
+    alert("Speichern fehlgeschlagen (evtl. Speicher voll). Bitte PDF sichern.");
+  }
+}
+
+function istLeeresAufmass(a) {
+  return (
+    !a.kunde.name.trim() &&
+    !a.kunde.ansprechpartner.trim() &&
+    !a.kunde.strasse.trim() &&
+    !a.kunde.plzOrt.trim() &&
+    !a.kunde.telefon.trim() &&
+    !a.baustelle.trim() &&
+    !a.arbeitsbeschreibung.trim() &&
+    a.material.length === 0
+  );
+}
+
+function upsertCurrentInListe() {
+  const idx = aufmassListe.findIndex((a) => a.id === currentAufmass.id);
+  currentAufmass.geaendert = new Date().toISOString();
+  if (idx >= 0) {
+    aufmassListe[idx] = currentAufmass;
+  } else {
+    aufmassListe.unshift(currentAufmass);
+  }
+  speichereListe();
+}
+
+function autosave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    if (!currentAufmass) return;
+    if (istLeeresAufmass(currentAufmass)) return; // leere Entwürfe nicht wegspeichern
+    upsertCurrentInListe();
+  }, 300);
+}
+
+/* ---------- Hilfsfunktionen ---------- */
+
+function neueId() {
+  return "am_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+}
+
+function heuteISO() {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function formatDatumDE(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+function neuesAufmass() {
+  return {
+    id: neueId(),
+    erstellt: new Date().toISOString(),
+    geaendert: new Date().toISOString(),
+    datum: heuteISO(),
+    kunde: { name: "", ansprechpartner: "", strasse: "", plzOrt: "", telefon: "" },
+    baustelle: "",
+    arbeitsbeschreibung: "",
+    material: []
+  };
+}
+
+/* ---------- Materialstamm laden ---------- */
+
+async function ladeMaterialDB() {
+  try {
+    const res = await fetch("materials.json");
+    const data = await res.json();
+    // Suchstring vorab in Kleinbuchstaben cachen für schnelle Filterung
+    materialDB = data.map((a) => ({ ...a, _s: (a.n + " " + a.b).toLowerCase() }));
+    materialDBReady = true;
+  } catch (e) {
+    console.error("Materialstamm konnte nicht geladen werden", e);
+    materialDB = [];
+    materialDBReady = false;
+  }
+}
+
+function sucheMaterial(query, limit = 30) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const worte = q.split(/\s+/).filter(Boolean);
+  const treffer = [];
+  for (let i = 0; i < materialDB.length; i++) {
+    const item = materialDB[i];
+    let ok = true;
+    for (const w of worte) {
+      if (!item._s.includes(w)) { ok = false; break; }
+    }
+    if (ok) {
+      treffer.push(item);
+      if (treffer.length >= limit) break;
+    }
+  }
+  return treffer;
+}
+
+/* ---------- Navigation / Rendering ---------- */
+
+function zeigeUebersicht() {
+  currentAufmass = null;
+  selectedArtikel = null;
+  headerTitle.textContent = "Material-Aufmaß";
+  btnBack.hidden = true;
+  btnNew.hidden = false;
+
+  const tpl = document.getElementById("tpl-uebersicht");
+  app.innerHTML = "";
+  app.appendChild(tpl.content.cloneNode(true));
+
+  const listeEl = document.getElementById("aufmassListe");
+  const leerEl = document.getElementById("listeLeer");
+
+  if (aufmassListe.length === 0) {
+    leerEl.hidden = false;
+    leerEl.querySelector('[data-action="new"]').addEventListener("click", () => oeffneFormular(neuesAufmass()));
+    return;
+  }
+
+  leerEl.hidden = true;
+  const sortiert = [...aufmassListe].sort((a, b) => (b.geaendert || "").localeCompare(a.geaendert || ""));
+
+  for (const a of sortiert) {
+    const li = document.createElement("li");
+    li.className = "aufmass-card";
+    const anzahl = a.material.length;
+    const kundeName = a.kunde.name.trim() || "(ohne Kundenname)";
+    const beschreibung = a.arbeitsbeschreibung.trim();
+    li.innerHTML = `
+      <div class="info">
+        <p class="kunde">${escapeHtml(kundeName)}</p>
+        <p class="meta">${formatDatumDE(a.datum)} · ${anzahl} Position${anzahl === 1 ? "" : "en"}${beschreibung ? " · " + escapeHtml(beschreibung) : ""}</p>
+      </div>
+      <span class="chevron">›</span>
+    `;
+    li.addEventListener("click", () => oeffneFormular(a));
+    listeEl.appendChild(li);
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function oeffneFormular(aufmass) {
+  currentAufmass = aufmass;
+  selectedArtikel = null;
+  headerTitle.textContent = "Aufmaß";
+  btnBack.hidden = false;
+  btnNew.hidden = true;
+
+  const tpl = document.getElementById("tpl-formular");
+  app.innerHTML = "";
+  app.appendChild(tpl.content.cloneNode(true));
+
+  fuelleFormular();
+  bindeFormularEvents();
+  renderMaterialTabelle();
+}
+
+function fuelleFormular() {
+  const a = currentAufmass;
+  document.getElementById("f_kundeName").value = a.kunde.name;
+  document.getElementById("f_ansprechpartner").value = a.kunde.ansprechpartner;
+  document.getElementById("f_strasse").value = a.kunde.strasse;
+  document.getElementById("f_plzOrt").value = a.kunde.plzOrt;
+  document.getElementById("f_telefon").value = a.kunde.telefon;
+  document.getElementById("f_baustelle").value = a.baustelle;
+  document.getElementById("f_datum").value = a.datum;
+  document.getElementById("f_arbeitsbeschreibung").value = a.arbeitsbeschreibung;
+  const bestehend = aufmassListe.some((x) => x.id === a.id);
+  document.getElementById("btnLoeschen").hidden = !bestehend;
+}
+
+function bindeFormularEvents() {
+  const a = currentAufmass;
+
+  const feldBindungen = [
+    ["f_kundeName", () => a.kunde.name, (v) => (a.kunde.name = v)],
+    ["f_ansprechpartner", () => a.kunde.ansprechpartner, (v) => (a.kunde.ansprechpartner = v)],
+    ["f_strasse", () => a.kunde.strasse, (v) => (a.kunde.strasse = v)],
+    ["f_plzOrt", () => a.kunde.plzOrt, (v) => (a.kunde.plzOrt = v)],
+    ["f_telefon", () => a.kunde.telefon, (v) => (a.kunde.telefon = v)],
+    ["f_baustelle", () => a.baustelle, (v) => (a.baustelle = v)],
+    ["f_datum", () => a.datum, (v) => (a.datum = v)],
+    ["f_arbeitsbeschreibung", () => a.arbeitsbeschreibung, (v) => (a.arbeitsbeschreibung = v)]
+  ];
+  for (const [id, , setter] of feldBindungen) {
+    document.getElementById(id).addEventListener("input", (e) => {
+      setter(e.target.value);
+      autosave();
+    });
+  }
+
+  // Tabs
+  const tabs = document.querySelectorAll(".tab");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      const ziel = tab.dataset.tab;
+      document.getElementById("tabListe").hidden = ziel !== "liste";
+      document.getElementById("tabFrei").hidden = ziel !== "frei";
+    });
+  });
+
+  // Autocomplete
+  const sucheInput = document.getElementById("f_suche");
+  const ergebnisListe = document.getElementById("sucheErgebnisse");
+  const ausgewaehlt = document.getElementById("ausgewaehlterArtikel");
+  const mengeListe = document.getElementById("f_mengeListe");
+  const einheitListe = document.getElementById("f_einheitListe");
+  const btnAddListe = document.getElementById("btnAddListe");
+
+  let sucheTimer = null;
+  sucheInput.addEventListener("input", () => {
+    clearTimeout(sucheTimer);
+    selectedArtikel = null;
+    aktualisiereAddListeButton();
+    const q = sucheInput.value;
+    sucheTimer = setTimeout(() => zeigeSucheErgebnisse(q), 120);
+  });
+  sucheInput.addEventListener("focus", () => {
+    if (sucheInput.value.trim()) zeigeSucheErgebnisse(sucheInput.value);
+  });
+  document.addEventListener("click", (e) => {
+    if (!ergebnisListe.contains(e.target) && e.target !== sucheInput) {
+      ergebnisListe.hidden = true;
+    }
+  });
+
+  function zeigeSucheErgebnisse(q) {
+    if (!materialDBReady) {
+      ergebnisListe.innerHTML = '<li class="no-result">Materialliste wird geladen…</li>';
+      ergebnisListe.hidden = false;
+      return;
+    }
+    const treffer = sucheMaterial(q);
+    ergebnisListe.innerHTML = "";
+    if (q.trim().length < 2) {
+      ergebnisListe.hidden = true;
+      return;
+    }
+    if (treffer.length === 0) {
+      ergebnisListe.innerHTML = '<li class="no-result">Keine Treffer – ggf. Freitext verwenden</li>';
+      ergebnisListe.hidden = false;
+      return;
+    }
+    for (const item of treffer) {
+      const li = document.createElement("li");
+      li.innerHTML = `${escapeHtml(item.b)}<small>Art.-Nr. ${escapeHtml(item.n)} · ${escapeHtml(item.e)}</small>`;
+      li.addEventListener("click", () => {
+        selectedArtikel = item;
+        sucheInput.value = item.b;
+        ergebnisListe.hidden = true;
+        einheitListe.value = item.e;
+        ausgewaehlt.hidden = false;
+        ausgewaehlt.innerHTML = `<strong>${escapeHtml(item.b)}</strong><span class="muted">Art.-Nr. ${escapeHtml(item.n)} · ${escapeHtml(item.e)}</span>`;
+        mengeListe.focus();
+        aktualisiereAddListeButton();
+      });
+      ergebnisListe.appendChild(li);
+    }
+    ergebnisListe.hidden = false;
+  }
+
+  function aktualisiereAddListeButton() {
+    const menge = parseFloat(mengeListe.value);
+    btnAddListe.disabled = !selectedArtikel || !(menge > 0);
+  }
+  mengeListe.addEventListener("input", aktualisiereAddListeButton);
+
+  btnAddListe.addEventListener("click", () => {
+    if (!selectedArtikel) return;
+    const menge = parseFloat(mengeListe.value) || 0;
+    if (!(menge > 0)) return;
+    a.material.push({
+      id: neueId(),
+      bezeichnung: selectedArtikel.b,
+      artikelnummer: selectedArtikel.n,
+      einheit: selectedArtikel.e,
+      menge,
+      quelle: "liste"
+    });
+    // Reset
+    selectedArtikel = null;
+    sucheInput.value = "";
+    mengeListe.value = "";
+    einheitListe.value = "";
+    ausgewaehlt.hidden = true;
+    aktualisiereAddListeButton();
+    renderMaterialTabelle();
+    autosave();
+    sucheInput.focus();
+  });
+
+  // Freitext
+  const bezFrei = document.getElementById("f_bezeichnungFrei");
+  const mengeFrei = document.getElementById("f_mengeFrei");
+  const einheitFrei = document.getElementById("f_einheitFrei");
+  const btnAddFrei = document.getElementById("btnAddFrei");
+
+  btnAddFrei.addEventListener("click", () => {
+    const bezeichnung = bezFrei.value.trim();
+    if (!bezeichnung) { bezFrei.focus(); return; }
+    const menge = parseFloat(mengeFrei.value) || 1;
+    const einheit = einheitFrei.value.trim() || "Stk";
+    a.material.push({
+      id: neueId(),
+      bezeichnung,
+      artikelnummer: "",
+      einheit,
+      menge,
+      quelle: "frei"
+    });
+    bezFrei.value = "";
+    mengeFrei.value = "";
+    einheitFrei.value = "";
+    renderMaterialTabelle();
+    autosave();
+    bezFrei.focus();
+  });
+
+  // Löschen / PDF
+  document.getElementById("btnLoeschen").addEventListener("click", () => {
+    if (!confirm("Dieses Aufmaß wirklich löschen?")) return;
+    aufmassListe = aufmassListe.filter((x) => x.id !== a.id);
+    speichereListe();
+    zeigeUebersicht();
+  });
+
+  document.getElementById("btnPdf").addEventListener("click", () => {
+    if (!istLeeresAufmass(a)) upsertCurrentInListe();
+    erstellePdf(a);
+  });
+}
+
+function renderMaterialTabelle() {
+  const a = currentAufmass;
+  const tbody = document.getElementById("materialTbody");
+  const leerHinweis = document.getElementById("materialLeerHinweis");
+  const anzahlEl = document.getElementById("anzahlPositionen");
+  tbody.innerHTML = "";
+  anzahlEl.textContent = a.material.length;
+
+  if (a.material.length === 0) {
+    leerHinweis.hidden = false;
+    return;
+  }
+  leerHinweis.hidden = true;
+
+  a.material.forEach((m) => {
+    const tr = document.createElement("tr");
+    const sub = m.quelle === "liste" && m.artikelnummer ? `<div class="row-sub">Art.-Nr. ${escapeHtml(m.artikelnummer)}</div>` : "";
+    tr.innerHTML = `
+      <td>${escapeHtml(m.bezeichnung)}${sub}</td>
+      <td class="col-menge"><input type="number" step="any" min="0" value="${m.menge}"></td>
+      <td>${escapeHtml(m.einheit)}</td>
+      <td class="col-del"><button class="btn-danger-text" type="button">✕</button></td>
+    `;
+    tr.querySelector("input").addEventListener("input", (e) => {
+      const v = parseFloat(e.target.value);
+      m.menge = isNaN(v) ? 0 : v;
+      autosave();
+    });
+    tr.querySelector("button").addEventListener("click", () => {
+      currentAufmass.material = currentAufmass.material.filter((x) => x.id !== m.id);
+      renderMaterialTabelle();
+      autosave();
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+/* ---------- PDF-Export ---------- */
+
+function dateiname(a) {
+  const kunde = (a.kunde.name || "Aufmass").trim().replace(/[^a-zA-Z0-9äöüÄÖÜß _-]/g, "").replace(/\s+/g, "_");
+  return `Aufmass_${kunde}_${a.datum}.pdf`;
+}
+
+function erstellePdf(a) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const marginX = 14;
+  let y = 18;
+
+  doc.setFontSize(16);
+  doc.setFont(undefined, "bold");
+  doc.text("Materialaufmaß", marginX, y);
+  doc.setFont(undefined, "normal");
+  doc.setFontSize(10);
+  doc.text(`Datum: ${formatDatumDE(a.datum)}`, 210 - marginX, y, { align: "right" });
+  y += 9;
+
+  doc.setDrawColor(210);
+  doc.line(marginX, y, 210 - marginX, y);
+  y += 7;
+
+  doc.setFontSize(11);
+  doc.setFont(undefined, "bold");
+  doc.text("Kunde", marginX, y);
+  y += 5.5;
+  doc.setFont(undefined, "normal");
+  doc.setFontSize(10);
+  const kundeZeilen = [];
+  if (a.kunde.name.trim()) kundeZeilen.push(a.kunde.name.trim());
+  if (a.kunde.ansprechpartner.trim()) kundeZeilen.push("z. Hd. " + a.kunde.ansprechpartner.trim());
+  if (a.kunde.strasse.trim()) kundeZeilen.push(a.kunde.strasse.trim());
+  if (a.kunde.plzOrt.trim()) kundeZeilen.push(a.kunde.plzOrt.trim());
+  if (a.kunde.telefon.trim()) kundeZeilen.push("Tel. " + a.kunde.telefon.trim());
+  if (kundeZeilen.length === 0) kundeZeilen.push("–");
+  for (const zeile of kundeZeilen) {
+    doc.text(zeile, marginX, y);
+    y += 5;
+  }
+
+  if (a.baustelle.trim()) {
+    y += 2;
+    doc.setFont(undefined, "bold");
+    doc.setFontSize(11);
+    doc.text("Baustelle / Bauvorhaben", marginX, y);
+    y += 5.5;
+    doc.setFont(undefined, "normal");
+    doc.setFontSize(10);
+    const zeilen = doc.splitTextToSize(a.baustelle.trim(), 210 - marginX * 2);
+    doc.text(zeilen, marginX, y);
+    y += zeilen.length * 5;
+  }
+
+  if (a.arbeitsbeschreibung.trim()) {
+    y += 2;
+    doc.setFont(undefined, "bold");
+    doc.setFontSize(11);
+    doc.text("Arbeitsbeschreibung", marginX, y);
+    y += 5.5;
+    doc.setFont(undefined, "normal");
+    doc.setFontSize(10);
+    const zeilen = doc.splitTextToSize(a.arbeitsbeschreibung.trim(), 210 - marginX * 2);
+    doc.text(zeilen, marginX, y);
+    y += zeilen.length * 5;
+  }
+
+  y += 4;
+
+  const head = [["Pos.", "Bezeichnung", "Art.-Nr.", "Menge", "Einh."]];
+
+  const body = a.material.map((m, i) => [
+    String(i + 1),
+    m.bezeichnung,
+    m.artikelnummer || "–",
+    m.menge.toLocaleString("de-DE"),
+    m.einheit
+  ]);
+
+  doc.autoTable({
+    startY: y,
+    head,
+    body,
+    margin: { left: marginX, right: marginX },
+    styles: { fontSize: 9, cellPadding: 2 },
+    headStyles: { fillColor: [21, 34, 56] },
+    columnStyles: { 0: { cellWidth: 9 }, 3: { cellWidth: 18 }, 4: { cellWidth: 16 } },
+    didDrawPage: () => {
+      const pageCount = doc.internal.getNumberOfPages();
+      doc.setFontSize(8);
+      doc.setTextColor(140);
+      doc.text(
+        `Seite ${doc.internal.getCurrentPageInfo().pageNumber} / ${pageCount}`,
+        210 - marginX,
+        297 - 8,
+        { align: "right" }
+      );
+      doc.setTextColor(0);
+    }
+  });
+
+  doc.save(dateiname(a));
+}
+
+/* ---------- Init ---------- */
+
+btnBack.addEventListener("click", zeigeUebersicht);
+btnNew.addEventListener("click", () => oeffneFormular(neuesAufmass()));
+
+ladeListe();
+ladeMaterialDB();
+zeigeUebersicht();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch((e) => console.error("SW-Registrierung fehlgeschlagen", e));
+  });
+}
