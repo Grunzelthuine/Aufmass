@@ -1,6 +1,6 @@
 // Service Worker für Material-Aufmaß App
 // Versionsnummer bei jedem Deploy mit Inhaltsänderungen erhöhen, damit Nutzer die neue Version bekommen.
-const CACHE_VERSION = "aufmass-v1";
+const CACHE_VERSION = "aufmass-v3";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -15,8 +15,12 @@ const CORE_ASSETS = [
 ];
 
 self.addEventListener("install", (event) => {
+  // Bewusst KEIN self.skipWaiting() hier: eine neue Version soll erst
+  // aktiv werden, wenn der Nutzer im Update-Banner "Jetzt aktualisieren"
+  // klickt (siehe Message-Handler unten). Bei der allerersten Installation
+  // gibt es ohnehin noch keine aktive Version, die warten müsste.
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(CORE_ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE_VERSION).then((cache) => cache.addAll(CORE_ASSETS))
   );
 });
 
@@ -26,6 +30,13 @@ self.addEventListener("activate", (event) => {
       Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
+});
+
+// Wird von app.js aufgerufen, wenn der Nutzer im Update-Banner bestätigt.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 // Cache-first, damit die App auf der Baustelle auch ohne Netz zuverlässig läuft.

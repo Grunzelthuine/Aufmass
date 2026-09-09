@@ -423,7 +423,7 @@ function renderMaterialTabelle() {
 
 function dateiname(a) {
   const kunde = (a.kunde.name || "Aufmass").trim().replace(/[^a-zA-Z0-9äöüÄÖÜß _-]/g, "").replace(/\s+/g, "_");
-  return `Aufmass_${kunde}_${a.datum}.pdf`;
+  return `Aufmass_${kunde}_${heuteISO()}.pdf`; // aktuelles Datum (Export-Zeitpunkt), nicht das Aufmaß-Datum
 }
 
 function erstellePdf(a) {
@@ -534,8 +534,62 @@ ladeListe();
 ladeMaterialDB();
 zeigeUebersicht();
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((e) => console.error("SW-Registrierung fehlgeschlagen", e));
+/* ---------- Service-Worker-Update ---------- */
+
+function initServiceWorkerUpdate() {
+  const banner = document.getElementById("updateBanner");
+  const btnUpdate = document.getElementById("btnUpdate");
+  let wartenderWorker = null;
+  let updateAngefordert = false; // true erst NACH Klick auf "Jetzt aktualisieren"
+
+  function zeigeUpdateBanner(worker) {
+    wartenderWorker = worker;
+    banner.hidden = false;
+  }
+
+  btnUpdate.addEventListener("click", () => {
+    if (!wartenderWorker) return;
+    updateAngefordert = true;
+    wartenderWorker.postMessage({ type: "SKIP_WAITING" });
   });
+
+  // "controllerchange" feuert auch beim allerersten Laden, sobald der erste
+  // Service Worker die Seite übernimmt – das ist kein Update und darf NICHT
+  // zu einem Neuladen führen. Nur neu laden, wenn der Nutzer zuvor aktiv im
+  // Banner bestätigt hat.
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!updateAngefordert) return;
+    updateAngefordert = false;
+    window.location.reload();
+  });
+
+  navigator.serviceWorker.register("sw.js").then((registration) => {
+    // Fall 1: Beim Laden der Seite liegt bereits eine fertig installierte,
+    // wartende Version vor (z. B. Tab war offen, während die neue Version
+    // im Hintergrund heruntergeladen wurde).
+    if (registration.waiting && navigator.serviceWorker.controller) {
+      zeigeUpdateBanner(registration.waiting);
+    }
+
+    // Fall 2: Während die Seite offen ist, wird eine neue Version gefunden.
+    registration.addEventListener("updatefound", () => {
+      const neuerWorker = registration.installing;
+      if (!neuerWorker) return;
+      neuerWorker.addEventListener("statechange", () => {
+        if (neuerWorker.state === "installed" && navigator.serviceWorker.controller) {
+          zeigeUpdateBanner(neuerWorker);
+        }
+      });
+    });
+
+    // Aktiv nach einer neuen Version schauen, wenn die App wieder in den
+    // Vordergrund kommt (z. B. nach dem Öffnen vom Homescreen).
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") registration.update();
+    });
+  }).catch((e) => console.error("SW-Registrierung fehlgeschlagen", e));
+}
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", initServiceWorkerUpdate);
 }
