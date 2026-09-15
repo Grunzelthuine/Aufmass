@@ -1,6 +1,6 @@
 // Service Worker für Material-Aufmaß App
 // Versionsnummer bei jedem Deploy mit Inhaltsänderungen erhöhen, damit Nutzer die neue Version bekommen.
-const CACHE_VERSION = "aufmass-v4";
+const CACHE_VERSION = "aufmass-v5";
 const CORE_ASSETS = [
   "./",
   "./index.html",

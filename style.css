@@ -313,6 +313,56 @@ td.col-del { text-align: right; white-space: nowrap; }
 .aufmass-card .meta { color: var(--color-text-muted); font-size: 0.82rem; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .aufmass-card .chevron { color: var(--color-text-muted); font-size: 1.1rem; }
 
+.section-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.section-heading-row-spaced { margin-top: 28px; }
+.section-heading-row h2 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+.btn-add-inline {
+  background: var(--color-accent);
+  color: #1c1400;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 1.15rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-add-inline:active { opacity: 0.85; }
+
+td.col-check { width: 30px; padding-right: 0; }
+.check-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1.5px solid var(--color-border);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.check-btn.checked {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+tr.zeile-gepackt td { color: var(--color-text-muted); }
+tr.zeile-gepackt .bez-text { text-decoration: line-through; }
+
 .update-banner {
   position: fixed;
   left: 0;

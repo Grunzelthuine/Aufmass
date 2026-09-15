@@ -31,6 +31,16 @@ DATANORM-Artikelliste oder frei eingetragen), Export als PDF.
   „Neue Version verfügbar“ mit Button zum Aktualisieren (siehe unten)
 - PDF-Dateiname: `Aufmass_<Kunde>_<aktuelles Datum>.pdf` (das Datum ist der
   Export-Zeitpunkt, nicht das im Formular gewählte Aufmaß-Datum)
+- **Packlisten**: eigener Bereich auf der Übersichtsseite (eigenes „+“ neben
+  „Packlisten“), unabhängig von den Aufmaßen. Eine Packliste hat eine freie
+  Bezeichnung (z. B. „Baustelle Müller / KW38“) und ein Datum und greift auf
+  dieselben drei Materialquellen zu wie ein Aufmaß (Aus Liste, Standardmaterial,
+  Freitext) – inklusive der Mengen-Plus-/Minus-Buttons und der „+m“-Zusatzeingabe.
+  Jede Position lässt sich über einen Haken abhaken, sobald sie in den Bulli
+  gepackt wurde; abgehakte Positionen wandern in einen einklappbaren Bereich
+  „Bereits gepackt“ statt gelöscht zu werden, lassen sich also jederzeit wieder
+  zurückholen. Packlisten werden wie Aufmaße automatisch lokal gespeichert,
+  haben aber keinen eigenen PDF-Export.
 
 ## Struktur
 

@@ -32,11 +32,21 @@
 <!-- Vorlage: Übersicht -->
 <template id="tpl-uebersicht">
   <section class="view">
+    <div class="section-heading-row">
+      <h2>Aufmaße</h2>
+    </div>
     <div id="listeLeer" class="empty-state" hidden>
       <p>Noch kein Aufmaß erfasst.</p>
       <button class="btn btn-primary" data-action="new">Erstes Aufmaß anlegen</button>
     </div>
     <ul id="aufmassListe" class="card-list"></ul>
+
+    <div class="section-heading-row section-heading-row-spaced">
+      <h2>Packlisten</h2>
+      <button id="btnNewPackliste" class="btn-add-inline" aria-label="Neue Packliste">＋</button>
+    </div>
+    <p id="packlistenLeer" class="hint" hidden>Noch keine Packliste angelegt.</p>
+    <ul id="packlistenListe" class="card-list"></ul>
   </section>
 </template>
 
@@ -81,59 +91,7 @@
 
     <details class="section-card" open>
       <summary>Material hinzufügen</summary>
-
-      <div class="tabs" role="tablist">
-        <button class="tab active" data-tab="liste" role="tab">Aus Liste</button>
-        <button class="tab" data-tab="standard" role="tab">Standardmaterial</button>
-        <button class="tab" data-tab="frei" role="tab">Freitext</button>
-      </div>
-
-      <div id="tabListe" class="tab-panel">
-        <div class="autocomplete">
-          <input type="text" id="f_suche" placeholder="Artikel suchen (Name oder Art.-Nr.)" autocomplete="off">
-          <ul id="sucheErgebnisse" class="suggest-list" hidden></ul>
-        </div>
-        <div id="ausgewaehlterArtikel" class="selected-article" hidden></div>
-        <div class="field-grid two-col">
-          <label>Menge
-            <input type="number" id="f_mengeListe" step="any" min="0" inputmode="decimal">
-          </label>
-          <label>Einheit
-            <input type="text" id="f_einheitListe" readonly>
-          </label>
-        </div>
-        <button class="btn btn-secondary" id="btnAddListe" disabled>Hinzufügen</button>
-      </div>
-
-      <div id="tabStandard" class="tab-panel" hidden>
-        <input type="text" id="f_sucheStandard" placeholder="Suchen oder nach Kategorie durchsuchen…" autocomplete="off">
-        <div id="standardListe" class="standard-liste"></div>
-        <div id="ausgewaehlterArtikelStandard" class="selected-article" hidden></div>
-        <div class="field-grid two-col">
-          <label>Menge
-            <input type="number" id="f_mengeStandard" step="any" min="0" inputmode="decimal">
-          </label>
-          <label>Einheit
-            <input type="text" id="f_einheitStandard" readonly>
-          </label>
-        </div>
-        <button class="btn btn-secondary" id="btnAddStandard" disabled>Hinzufügen</button>
-      </div>
-
-      <div id="tabFrei" class="tab-panel" hidden>
-        <label class="full">Bezeichnung
-          <input type="text" id="f_bezeichnungFrei" placeholder="z. B. Verlegerohr M25 grau">
-        </label>
-        <div class="field-grid two-col">
-          <label>Menge
-            <input type="number" id="f_mengeFrei" step="any" min="0" inputmode="decimal">
-          </label>
-          <label>Einheit
-            <input type="text" id="f_einheitFrei" placeholder="Stk, m, ...">
-          </label>
-        </div>
-        <button class="btn btn-secondary" id="btnAddFrei">Hinzufügen</button>
-      </div>
+      <div id="materialHinzufuegenAufmass"></div>
     </details>
 
     <details class="section-card" open>
@@ -157,6 +115,126 @@
     <div class="action-bar">
       <button class="btn btn-outline" id="btnLoeschen" hidden>Aufmaß löschen</button>
       <button class="btn btn-primary" id="btnPdf">Als PDF exportieren</button>
+    </div>
+    <p class="autosave-hint">Änderungen werden automatisch gespeichert.</p>
+  </section>
+</template>
+
+<!-- Wiederverwendbarer Baustein: Material hinzufügen (Tabs Aus Liste / Standardmaterial / Freitext) -->
+<template id="tpl-material-tabs">
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-tab="liste" role="tab">Aus Liste</button>
+    <button class="tab" data-tab="standard" role="tab">Standardmaterial</button>
+    <button class="tab" data-tab="frei" role="tab">Freitext</button>
+  </div>
+
+  <div id="tabListe" class="tab-panel">
+    <div class="autocomplete">
+      <input type="text" id="f_suche" placeholder="Artikel suchen (Name oder Art.-Nr.)" autocomplete="off">
+      <ul id="sucheErgebnisse" class="suggest-list" hidden></ul>
+    </div>
+    <div id="ausgewaehlterArtikel" class="selected-article" hidden></div>
+    <div class="field-grid two-col">
+      <label>Menge
+        <input type="number" id="f_mengeListe" step="any" min="0" inputmode="decimal">
+      </label>
+      <label>Einheit
+        <input type="text" id="f_einheitListe" readonly>
+      </label>
+    </div>
+    <button class="btn btn-secondary" id="btnAddListe" disabled>Hinzufügen</button>
+  </div>
+
+  <div id="tabStandard" class="tab-panel" hidden>
+    <input type="text" id="f_sucheStandard" placeholder="Suchen oder nach Kategorie durchsuchen…" autocomplete="off">
+    <div id="standardListe" class="standard-liste"></div>
+    <div id="ausgewaehlterArtikelStandard" class="selected-article" hidden></div>
+    <div class="field-grid two-col">
+      <label>Menge
+        <input type="number" id="f_mengeStandard" step="any" min="0" inputmode="decimal">
+      </label>
+      <label>Einheit
+        <input type="text" id="f_einheitStandard" readonly>
+      </label>
+    </div>
+    <button class="btn btn-secondary" id="btnAddStandard" disabled>Hinzufügen</button>
+  </div>
+
+  <div id="tabFrei" class="tab-panel" hidden>
+    <label class="full">Bezeichnung
+      <input type="text" id="f_bezeichnungFrei" placeholder="z. B. Verlegerohr M25 grau">
+    </label>
+    <div class="field-grid two-col">
+      <label>Menge
+        <input type="number" id="f_mengeFrei" step="any" min="0" inputmode="decimal">
+      </label>
+      <label>Einheit
+        <input type="text" id="f_einheitFrei" placeholder="Stk, m, ...">
+      </label>
+    </div>
+    <button class="btn btn-secondary" id="btnAddFrei">Hinzufügen</button>
+  </div>
+</template>
+
+<!-- Vorlage: Packliste -->
+<template id="tpl-packliste">
+  <section class="view">
+    <details class="section-card" open>
+      <summary>Packliste</summary>
+      <div class="field-grid">
+        <label class="full">Bezeichnung
+          <input type="text" id="p_bezeichnung" placeholder="z. B. Baustelle Müller / KW38">
+        </label>
+        <label>Datum
+          <input type="date" id="p_datum">
+        </label>
+      </div>
+    </details>
+
+    <details class="section-card" open>
+      <summary>Material hinzufügen</summary>
+      <div id="materialHinzufuegenPackliste"></div>
+    </details>
+
+    <details class="section-card" open>
+      <summary>Noch zu packen (<span id="packlisteAnzahlOffen">0</span>)</summary>
+      <div class="table-scroll">
+        <table id="packlisteOffenTabelle">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Bezeichnung</th>
+              <th>Menge</th>
+              <th>Einh.</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="packlisteOffenTbody"></tbody>
+        </table>
+      </div>
+      <p id="packlisteOffenLeer" class="hint" hidden>Alles eingepackt.</p>
+    </details>
+
+    <details class="section-card" id="packlisteGepacktDetails">
+      <summary>Bereits gepackt (<span id="packlisteAnzahlGepackt">0</span>)</summary>
+      <div class="table-scroll">
+        <table id="packlisteGepacktTabelle">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Bezeichnung</th>
+              <th>Menge</th>
+              <th>Einh.</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="packlisteGepacktTbody"></tbody>
+        </table>
+      </div>
+    </details>
+
+    <div class="action-bar">
+      <button class="btn btn-outline" id="btnPacklisteLoeschen" hidden>Packliste löschen</button>
     </div>
     <p class="autosave-hint">Änderungen werden automatisch gespeichert.</p>
   </section>

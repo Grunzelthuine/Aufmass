@@ -7,6 +7,7 @@
    ============================================================ */
 
 const STORAGE_KEY = "aufmass_v1_liste";
+const STORAGE_KEY_PACKLISTEN = "aufmass_v1_packlisten";
 const app = document.getElementById("app");
 const headerTitle = document.getElementById("headerTitle");
 const btnBack = document.getElementById("btnBack");
@@ -14,6 +15,8 @@ const btnNew = document.getElementById("btnNew");
 
 let aufmassListe = [];      // alle gespeicherten Aufmaße
 let currentAufmass = null;  // aktuell im Formular geöffnetes Aufmaß
+let packlisten = [];          // alle gespeicherten Packlisten
+let currentPackliste = null;  // aktuell geöffnete Packliste
 let materialDB = [];        // Materialstamm aus materials.json (DATANORM)
 let materialDBReady = false;
 let standardMaterialDB = [];      // Materialstamm aus standardmaterial.json
@@ -67,12 +70,49 @@ function upsertCurrentInListe() {
   speichereListe();
 }
 
+function ladePacklisten() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PACKLISTEN);
+    packlisten = raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.error("Fehler beim Laden der gespeicherten Packlisten", e);
+    packlisten = [];
+  }
+}
+
+function speicherePacklisten() {
+  try {
+    localStorage.setItem(STORAGE_KEY_PACKLISTEN, JSON.stringify(packlisten));
+  } catch (e) {
+    console.error("Fehler beim Speichern", e);
+    alert("Speichern fehlgeschlagen (evtl. Speicher voll).");
+  }
+}
+
+function istLeerePackliste(p) {
+  return !p.bezeichnung.trim() && p.material.length === 0;
+}
+
+function upsertCurrentPackliste() {
+  const idx = packlisten.findIndex((p) => p.id === currentPackliste.id);
+  currentPackliste.geaendert = new Date().toISOString();
+  if (idx >= 0) {
+    packlisten[idx] = currentPackliste;
+  } else {
+    packlisten.unshift(currentPackliste);
+  }
+  speicherePacklisten();
+}
+
 function autosave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    if (!currentAufmass) return;
-    if (istLeeresAufmass(currentAufmass)) return; // leere Entwürfe nicht wegspeichern
-    upsertCurrentInListe();
+    if (currentAufmass && !istLeeresAufmass(currentAufmass)) {
+      upsertCurrentInListe();
+    }
+    if (currentPackliste && !istLeerePackliste(currentPackliste)) {
+      upsertCurrentPackliste();
+    }
   }, 300);
 }
 
@@ -114,6 +154,17 @@ function neuesAufmass() {
     baustelle: "",
     arbeitsbeschreibung: "",
     material: []
+  };
+}
+
+function neuePackliste() {
+  return {
+    id: neueId(),
+    erstellt: new Date().toISOString(),
+    geaendert: new Date().toISOString(),
+    bezeichnung: "",
+    datum: heuteISO(),
+    material: [] // { id, bezeichnung, artikelnummer, einheit, menge, quelle, erledigt }
   };
 }
 
@@ -169,6 +220,7 @@ async function ladeStandardMaterialDB() {
 
 function zeigeUebersicht() {
   currentAufmass = null;
+  currentPackliste = null;
   selectedArtikel = null;
   selectedStandardArtikel = null;
   headerTitle.textContent = "Material-Aufmaß";
@@ -185,27 +237,55 @@ function zeigeUebersicht() {
   if (aufmassListe.length === 0) {
     leerEl.hidden = false;
     leerEl.querySelector('[data-action="new"]').addEventListener("click", () => oeffneFormular(neuesAufmass()));
-    return;
+  } else {
+    leerEl.hidden = true;
+    const sortiert = [...aufmassListe].sort((a, b) => (b.geaendert || "").localeCompare(a.geaendert || ""));
+
+    for (const a of sortiert) {
+      const li = document.createElement("li");
+      li.className = "aufmass-card";
+      const anzahl = a.material.length;
+      const kundeName = a.kunde.name.trim() || "(ohne Kundenname)";
+      const beschreibung = a.arbeitsbeschreibung.trim();
+      li.innerHTML = `
+        <div class="info">
+          <p class="kunde">${escapeHtml(kundeName)}</p>
+          <p class="meta">${formatDatumDE(a.datum)} · ${anzahl} Position${anzahl === 1 ? "" : "en"}${beschreibung ? " · " + escapeHtml(beschreibung) : ""}</p>
+        </div>
+        <span class="chevron">›</span>
+      `;
+      li.addEventListener("click", () => oeffneFormular(a));
+      listeEl.appendChild(li);
+    }
   }
 
-  leerEl.hidden = true;
-  const sortiert = [...aufmassListe].sort((a, b) => (b.geaendert || "").localeCompare(a.geaendert || ""));
+  document.getElementById("btnNewPackliste").addEventListener("click", () => oeffnePackliste(neuePackliste()));
 
-  for (const a of sortiert) {
-    const li = document.createElement("li");
-    li.className = "aufmass-card";
-    const anzahl = a.material.length;
-    const kundeName = a.kunde.name.trim() || "(ohne Kundenname)";
-    const beschreibung = a.arbeitsbeschreibung.trim();
-    li.innerHTML = `
-      <div class="info">
-        <p class="kunde">${escapeHtml(kundeName)}</p>
-        <p class="meta">${formatDatumDE(a.datum)} · ${anzahl} Position${anzahl === 1 ? "" : "en"}${beschreibung ? " · " + escapeHtml(beschreibung) : ""}</p>
-      </div>
-      <span class="chevron">›</span>
-    `;
-    li.addEventListener("click", () => oeffneFormular(a));
-    listeEl.appendChild(li);
+  const packlistenListeEl = document.getElementById("packlistenListe");
+  const packlistenLeerEl = document.getElementById("packlistenLeer");
+
+  if (packlisten.length === 0) {
+    packlistenLeerEl.hidden = false;
+  } else {
+    packlistenLeerEl.hidden = true;
+    const sortiertP = [...packlisten].sort((a, b) => (b.geaendert || "").localeCompare(a.geaendert || ""));
+
+    for (const p of sortiertP) {
+      const li = document.createElement("li");
+      li.className = "aufmass-card";
+      const gesamt = p.material.length;
+      const offenAnzahl = p.material.filter((m) => !m.erledigt).length;
+      const bezeichnung = p.bezeichnung.trim() || "(ohne Bezeichnung)";
+      li.innerHTML = `
+        <div class="info">
+          <p class="kunde">${escapeHtml(bezeichnung)}</p>
+          <p class="meta">${formatDatumDE(p.datum)} · ${offenAnzahl} von ${gesamt} noch zu packen</p>
+        </div>
+        <span class="chevron">›</span>
+      `;
+      li.addEventListener("click", () => oeffnePackliste(p));
+      packlistenListeEl.appendChild(li);
+    }
   }
 }
 
@@ -217,6 +297,7 @@ function escapeHtml(str) {
 
 function oeffneFormular(aufmass) {
   currentAufmass = aufmass;
+  currentPackliste = null;
   selectedArtikel = null;
   selectedStandardArtikel = null;
   headerTitle.textContent = "Aufmaß";
@@ -266,6 +347,43 @@ function bindeFormularEvents() {
     });
   }
 
+  klonMaterialTabs("materialHinzufuegenAufmass");
+  bindeMaterialAuswahl(a.material, () => {
+    renderMaterialTabelle();
+    autosave();
+  });
+
+  // Löschen / PDF
+  document.getElementById("btnLoeschen").addEventListener("click", () => {
+    if (!confirm("Dieses Aufmaß wirklich löschen?")) return;
+    aufmassListe = aufmassListe.filter((x) => x.id !== a.id);
+    speichereListe();
+    zeigeUebersicht();
+  });
+
+  document.getElementById("btnPdf").addEventListener("click", () => {
+    if (!istLeeresAufmass(a)) upsertCurrentInListe();
+    erstellePdf(a);
+  });
+}
+
+/* Klont den wiederverwendbaren "Material hinzufügen"-Baustein (Tabs Aus
+   Liste / Standardmaterial / Freitext) in den Platzhalter mit der
+   übergebenen ID. Wird sowohl vom Aufmaß- als auch vom Packliste-Formular
+   genutzt (immer nur eines davon gleichzeitig im DOM). */
+function klonMaterialTabs(platzhalterId) {
+  const tpl = document.getElementById("tpl-material-tabs");
+  const platzhalter = document.getElementById(platzhalterId);
+  platzhalter.innerHTML = "";
+  platzhalter.appendChild(tpl.content.cloneNode(true));
+}
+
+/* Verdrahtet die drei Material-Tabs (Aus Liste / Standardmaterial /
+   Freitext). `material` ist das Array, in das neue Positionen eingefügt
+   werden (currentAufmass.material oder currentPackliste.material).
+   `onHinzufuegen` wird nach jedem erfolgreichen Hinzufügen aufgerufen
+   (übernimmt Re-Rendering + Autosave beim Aufrufer). */
+function bindeMaterialAuswahl(material, onHinzufuegen) {
   // Tabs
   const tabs = document.querySelectorAll(".tab");
   tabs.forEach((tab) => {
@@ -349,13 +467,14 @@ function bindeFormularEvents() {
     if (!selectedArtikel) return;
     const menge = parseFloat(mengeListe.value) || 0;
     if (!(menge > 0)) return;
-    a.material.push({
+    material.push({
       id: neueId(),
       bezeichnung: selectedArtikel.b,
       artikelnummer: selectedArtikel.n,
       einheit: selectedArtikel.e,
       menge,
-      quelle: "liste"
+      quelle: "liste",
+      erledigt: false
     });
     // Reset
     selectedArtikel = null;
@@ -364,8 +483,7 @@ function bindeFormularEvents() {
     einheitListe.value = "";
     ausgewaehlt.hidden = true;
     aktualisiereAddListeButton();
-    renderMaterialTabelle();
-    autosave();
+    onHinzufuegen();
     sucheInput.focus();
   });
 
@@ -446,13 +564,14 @@ function bindeFormularEvents() {
     if (!selectedStandardArtikel) return;
     const menge = parseFloat(mengeStandard.value) || 0;
     if (!(menge > 0)) return;
-    a.material.push({
+    material.push({
       id: neueId(),
       bezeichnung: selectedStandardArtikel.b,
       artikelnummer: "",
       einheit: selectedStandardArtikel.e,
       menge,
-      quelle: "standard"
+      quelle: "standard",
+      erledigt: false
     });
     selectedStandardArtikel = null;
     sucheStandardInput.value = "";
@@ -461,8 +580,7 @@ function bindeFormularEvents() {
     ausgewaehltStandard.hidden = true;
     aktualisiereAddStandardButton();
     renderStandardListe("");
-    renderMaterialTabelle();
-    autosave();
+    onHinzufuegen();
   });
 
   renderStandardListe(""); // initial: komplette Liste nach Kategorie durchsuchbar anzeigen
@@ -478,34 +596,81 @@ function bindeFormularEvents() {
     if (!bezeichnung) { bezFrei.focus(); return; }
     const menge = parseFloat(mengeFrei.value) || 1;
     const einheit = einheitFrei.value.trim() || "Stk";
-    a.material.push({
+    material.push({
       id: neueId(),
       bezeichnung,
       artikelnummer: "",
       einheit,
       menge,
-      quelle: "frei"
+      quelle: "frei",
+      erledigt: false
     });
     bezFrei.value = "";
     mengeFrei.value = "";
     einheitFrei.value = "";
-    renderMaterialTabelle();
-    autosave();
+    onHinzufuegen();
     bezFrei.focus();
   });
+}
 
-  // Löschen / PDF
-  document.getElementById("btnLoeschen").addEventListener("click", () => {
-    if (!confirm("Dieses Aufmaß wirklich löschen?")) return;
-    aufmassListe = aufmassListe.filter((x) => x.id !== a.id);
-    speichereListe();
-    zeigeUebersicht();
+/* Erzeugt die Menge-Zelle mit Plus-/Minus-Buttons und (bei Einheit "m")
+   dem Zusatzfeld zum Draufaddieren. `m` ist die mutierte Materialposition,
+   `onChange` wird nach jeder Änderung aufgerufen (Autosave). Gemeinsam
+   genutzt von der Aufmaß-Materialliste und der Packliste. */
+function baueMengeZelle(m, onChange) {
+  const td = document.createElement("td");
+  td.className = "col-menge";
+  const meterZeile = istMeterEinheit(m.einheit)
+    ? `<div class="menge-add">
+         <input type="number" step="any" min="0" placeholder="+ m" class="menge-add-input" inputmode="decimal">
+         <button type="button" class="btn-qty-add">hinzufügen</button>
+       </div>`
+    : "";
+  td.innerHTML = `
+    <div class="menge-control">
+      <button type="button" class="btn-qty" data-action="dec" aria-label="Menge verringern">−</button>
+      <input type="number" step="any" min="0" value="${m.menge}" class="menge-input" inputmode="decimal">
+      <button type="button" class="btn-qty" data-action="inc" aria-label="Menge erhöhen">+</button>
+    </div>
+    ${meterZeile}
+  `;
+
+  const mengeInput = td.querySelector(".menge-input");
+  mengeInput.addEventListener("input", (e) => {
+    const v = parseFloat(e.target.value);
+    m.menge = isNaN(v) ? 0 : v;
+    onChange();
   });
 
-  document.getElementById("btnPdf").addEventListener("click", () => {
-    if (!istLeeresAufmass(a)) upsertCurrentInListe();
-    erstellePdf(a);
+  td.querySelector('[data-action="dec"]').addEventListener("click", () => {
+    m.menge = Math.max(0, rundeMenge(m.menge - 1));
+    mengeInput.value = m.menge;
+    onChange();
   });
+  td.querySelector('[data-action="inc"]').addEventListener("click", () => {
+    m.menge = rundeMenge(m.menge + 1);
+    mengeInput.value = m.menge;
+    onChange();
+  });
+
+  const addInput = td.querySelector(".menge-add-input");
+  if (addInput) {
+    const addBtn = td.querySelector(".btn-qty-add");
+    const zusatzHinzufuegen = () => {
+      const zusatz = parseFloat(addInput.value);
+      if (!(zusatz > 0)) return;
+      m.menge = rundeMenge(m.menge + zusatz);
+      mengeInput.value = m.menge;
+      addInput.value = "";
+      onChange();
+    };
+    addBtn.addEventListener("click", zusatzHinzufuegen);
+    addInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); zusatzHinzufuegen(); }
+    });
+  }
+
+  return td;
 }
 
 function renderMaterialTabelle() {
@@ -524,70 +689,152 @@ function renderMaterialTabelle() {
 
   a.material.forEach((m) => {
     const tr = document.createElement("tr");
+
+    const tdBez = document.createElement("td");
     const sub = m.quelle === "liste" && m.artikelnummer ? `<div class="row-sub">Art.-Nr. ${escapeHtml(m.artikelnummer)}</div>` : "";
-    const meterZeile = istMeterEinheit(m.einheit)
-      ? `<div class="menge-add">
-           <input type="number" step="any" min="0" placeholder="+ m" class="menge-add-input" inputmode="decimal">
-           <button type="button" class="btn-qty-add">hinzufügen</button>
-         </div>`
-      : "";
-    tr.innerHTML = `
-      <td>${escapeHtml(m.bezeichnung)}${sub}</td>
-      <td class="col-menge">
-        <div class="menge-control">
-          <button type="button" class="btn-qty" data-action="dec" aria-label="Menge verringern">−</button>
-          <input type="number" step="any" min="0" value="${m.menge}" class="menge-input" inputmode="decimal">
-          <button type="button" class="btn-qty" data-action="inc" aria-label="Menge erhöhen">+</button>
-        </div>
-        ${meterZeile}
-      </td>
-      <td>${escapeHtml(m.einheit)}</td>
-      <td class="col-del"><button class="btn-danger-text" type="button">✕</button></td>
-    `;
+    tdBez.innerHTML = `${escapeHtml(m.bezeichnung)}${sub}`;
+    tr.appendChild(tdBez);
 
-    const mengeInput = tr.querySelector(".menge-input");
-    mengeInput.addEventListener("input", (e) => {
-      const v = parseFloat(e.target.value);
-      m.menge = isNaN(v) ? 0 : v;
-      autosave();
-    });
+    tr.appendChild(baueMengeZelle(m, autosave));
 
-    tr.querySelector('[data-action="dec"]').addEventListener("click", () => {
-      m.menge = Math.max(0, rundeMenge(m.menge - 1));
-      mengeInput.value = m.menge;
-      autosave();
-    });
-    tr.querySelector('[data-action="inc"]').addEventListener("click", () => {
-      m.menge = rundeMenge(m.menge + 1);
-      mengeInput.value = m.menge;
-      autosave();
-    });
+    const tdEinheit = document.createElement("td");
+    tdEinheit.textContent = m.einheit;
+    tr.appendChild(tdEinheit);
 
-    const addInput = tr.querySelector(".menge-add-input");
-    if (addInput) {
-      const addBtn = tr.querySelector(".btn-qty-add");
-      const zusatzHinzufuegen = () => {
-        const zusatz = parseFloat(addInput.value);
-        if (!(zusatz > 0)) return;
-        m.menge = rundeMenge(m.menge + zusatz);
-        mengeInput.value = m.menge;
-        addInput.value = "";
-        autosave();
-      };
-      addBtn.addEventListener("click", zusatzHinzufuegen);
-      addInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { e.preventDefault(); zusatzHinzufuegen(); }
-      });
-    }
-
-    tr.querySelector(".btn-danger-text").addEventListener("click", () => {
+    const tdDel = document.createElement("td");
+    tdDel.className = "col-del";
+    tdDel.innerHTML = `<button class="btn-danger-text" type="button">✕</button>`;
+    tdDel.querySelector("button").addEventListener("click", () => {
       currentAufmass.material = currentAufmass.material.filter((x) => x.id !== m.id);
       renderMaterialTabelle();
       autosave();
     });
+    tr.appendChild(tdDel);
 
     tbody.appendChild(tr);
   });
+}
+
+/* ---------- Packliste ---------- */
+
+function oeffnePackliste(packliste) {
+  currentPackliste = packliste;
+  currentAufmass = null;
+  selectedArtikel = null;
+  selectedStandardArtikel = null;
+  headerTitle.textContent = "Packliste";
+  btnBack.hidden = false;
+  btnNew.hidden = true;
+
+  const tpl = document.getElementById("tpl-packliste");
+  app.innerHTML = "";
+  app.appendChild(tpl.content.cloneNode(true));
+
+  fuellePackliste();
+  bindePacklisteEvents();
+  renderPacklisteMaterial();
+}
+
+function fuellePackliste() {
+  const p = currentPackliste;
+  document.getElementById("p_bezeichnung").value = p.bezeichnung;
+  document.getElementById("p_datum").value = p.datum;
+  const bestehend = packlisten.some((x) => x.id === p.id);
+  document.getElementById("btnPacklisteLoeschen").hidden = !bestehend;
+}
+
+function bindePacklisteEvents() {
+  const p = currentPackliste;
+
+  document.getElementById("p_bezeichnung").addEventListener("input", (e) => {
+    p.bezeichnung = e.target.value;
+    autosave();
+  });
+  document.getElementById("p_datum").addEventListener("input", (e) => {
+    p.datum = e.target.value;
+    autosave();
+  });
+
+  klonMaterialTabs("materialHinzufuegenPackliste");
+  bindeMaterialAuswahl(p.material, () => {
+    renderPacklisteMaterial();
+    autosave();
+  });
+
+  document.getElementById("btnPacklisteLoeschen").addEventListener("click", () => {
+    if (!confirm("Diese Packliste wirklich löschen?")) return;
+    packlisten = packlisten.filter((x) => x.id !== p.id);
+    speicherePacklisten();
+    zeigeUebersicht();
+  });
+}
+
+function bauePacklisteZeile(m, istGepackt) {
+  const tr = document.createElement("tr");
+  if (istGepackt) tr.className = "zeile-gepackt";
+
+  const tdCheck = document.createElement("td");
+  tdCheck.className = "col-check";
+  const checkBtn = document.createElement("button");
+  checkBtn.type = "button";
+  checkBtn.className = "check-btn" + (istGepackt ? " checked" : "");
+  checkBtn.setAttribute("aria-label", istGepackt ? "Als noch zu packen markieren" : "Als gepackt markieren");
+  checkBtn.textContent = "✓";
+  checkBtn.addEventListener("click", () => {
+    m.erledigt = !m.erledigt;
+    renderPacklisteMaterial();
+    autosave();
+  });
+  tdCheck.appendChild(checkBtn);
+  tr.appendChild(tdCheck);
+
+  const tdBez = document.createElement("td");
+  const sub = m.quelle === "liste" && m.artikelnummer ? `<div class="row-sub">Art.-Nr. ${escapeHtml(m.artikelnummer)}</div>` : "";
+  tdBez.innerHTML = `<span class="bez-text">${escapeHtml(m.bezeichnung)}</span>${sub}`;
+  tr.appendChild(tdBez);
+
+  tr.appendChild(baueMengeZelle(m, autosave));
+
+  const tdEinheit = document.createElement("td");
+  tdEinheit.textContent = m.einheit;
+  tr.appendChild(tdEinheit);
+
+  const tdDel = document.createElement("td");
+  tdDel.className = "col-del";
+  tdDel.innerHTML = `<button class="btn-danger-text" type="button">✕</button>`;
+  tdDel.querySelector("button").addEventListener("click", () => {
+    currentPackliste.material = currentPackliste.material.filter((x) => x.id !== m.id);
+    renderPacklisteMaterial();
+    autosave();
+  });
+  tr.appendChild(tdDel);
+
+  return tr;
+}
+
+function renderPacklisteMaterial() {
+  const p = currentPackliste;
+  const offenTbody = document.getElementById("packlisteOffenTbody");
+  const gepacktTbody = document.getElementById("packlisteGepacktTbody");
+  const offenLeer = document.getElementById("packlisteOffenLeer");
+  const anzahlOffen = document.getElementById("packlisteAnzahlOffen");
+  const anzahlGepackt = document.getElementById("packlisteAnzahlGepackt");
+  const gepacktDetails = document.getElementById("packlisteGepacktDetails");
+
+  offenTbody.innerHTML = "";
+  gepacktTbody.innerHTML = "";
+
+  const offen = p.material.filter((m) => !m.erledigt);
+  const gepackt = p.material.filter((m) => m.erledigt);
+
+  anzahlOffen.textContent = offen.length;
+  anzahlGepackt.textContent = gepackt.length;
+
+  offenLeer.hidden = offen.length !== 0;
+  gepacktDetails.hidden = gepackt.length === 0;
+
+  offen.forEach((m) => offenTbody.appendChild(bauePacklisteZeile(m, false)));
+  gepackt.forEach((m) => gepacktTbody.appendChild(bauePacklisteZeile(m, true)));
 }
 
 /* ---------- PDF-Export ---------- */
@@ -702,6 +949,7 @@ btnBack.addEventListener("click", zeigeUebersicht);
 btnNew.addEventListener("click", () => oeffneFormular(neuesAufmass()));
 
 ladeListe();
+ladePacklisten();
 ladeMaterialDB();
 ladeStandardMaterialDB();
 zeigeUebersicht();
