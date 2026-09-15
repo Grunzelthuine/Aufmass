@@ -3,8 +3,7 @@
 /* ============================================================
    Material-Aufmaß App
    Speicherung: localStorage (rein lokal auf dem Gerät)
-   Materialstamm "Aus Liste": DATANORM-Katalog, via IndexedDB (siehe unten)
-   Materialstamm "Standardmaterial": standardmaterial.json (klein, im Speicher)
+   Materialstamm: materials.json (aus DATANORM erzeugt)
    ============================================================ */
 
 const STORAGE_KEY = "aufmass_v1_liste";
@@ -18,6 +17,8 @@ let aufmassListe = [];      // alle gespeicherten Aufmaße
 let currentAufmass = null;  // aktuell im Formular geöffnetes Aufmaß
 let packlisten = [];          // alle gespeicherten Packlisten
 let currentPackliste = null;  // aktuell geöffnete Packliste
+let materialDB = [];        // Materialstamm aus materials.json (DATANORM)
+let materialDBReady = false;
 let standardMaterialDB = [];      // Materialstamm aus standardmaterial.json
 let standardMaterialDBReady = false;
 let selectedArtikel = null;         // aktuell gewähltes Material (Tab "Aus Liste")
@@ -167,53 +168,19 @@ function neuePackliste() {
   };
 }
 
-/* ---------- Materialstamm "Aus Liste" (DATANORM, via IndexedDB) ----------
-   Der DATANORM-Vollsortiments-Katalog hat über eine Million Artikel
-   (>100 MB als JSON) – zu groß für eine einzelne Datei (GitHub-Limit 100 MB
-   pro Datei). Er liegt daher in mehreren Chunk-Dateien
-   (materials-chunks/materials-chunk-*.json, siehe tools/datanorm_to_json.py)
-   und wird beim App-Start komplett geladen und in ein Array im Speicher
-   gehalten – genau wie zuvor bei der kleineren materials.json, nur eben
-   aus mehreren Dateien zusammengesetzt. Das wurde bewusst so (und nicht
-   über eine IndexedDB mit Volltext-Index) umgesetzt: ein Test hat gezeigt,
-   dass der Aufbau eines Wort-Index für über eine Million Artikel in
-   IndexedDB mehrere zehn Minuten dauern würde, während Laden+Aufbau des
-   Suchcaches als einfaches Array in unter 3 Sekunden fertig ist (Chrome,
-   gemessen) und auch die Suche selbst danach durchgehend unter 100 ms
-   bleibt, selbst im ungünstigsten Fall (kein Treffer, kompletter Scan).
-   Der Service Worker cached die Chunk-Dateien wie jede andere Datei auch,
-   sodass sie nur beim allerersten Start (bzw. nach einer neuen DATANORM-
-   Datei mit geänderter CACHE_VERSION) tatsächlich übers Netz geladen werden
-   müssen. */
-
-let materialDB = [];        // Materialstamm "Aus Liste", aus den Chunk-Dateien zusammengesetzt
-let materialDBReady = false;
-let materialDBFehler = null;
+/* ---------- Materialstamm laden ---------- */
 
 async function ladeMaterialDB() {
   try {
-    const manifestRes = await fetch("materials-chunks/materials-manifest.json");
-    if (!manifestRes.ok) throw new Error("Manifest: HTTP " + manifestRes.status);
-    const manifest = await manifestRes.json();
-
-    const teile = await Promise.all(
-      manifest.chunks.map(async (chunkDatei) => {
-        const res = await fetch(`materials-chunks/${chunkDatei}`);
-        if (!res.ok) throw new Error(`${chunkDatei}: HTTP ${res.status}`);
-        return res.json();
-      })
-    );
-
-    const alle = [].concat(...teile);
+    const res = await fetch("materials.json");
+    const data = await res.json();
     // Suchstring vorab in Kleinbuchstaben cachen für schnelle Filterung
-    materialDB = alle.map((a) => ({ ...a, _s: (a.n + " " + a.b).toLowerCase() }));
+    materialDB = data.map((a) => ({ ...a, _s: (a.n + " " + a.b).toLowerCase() }));
     materialDBReady = true;
-    materialDBFehler = null;
   } catch (e) {
     console.error("Materialstamm konnte nicht geladen werden", e);
     materialDB = [];
     materialDBReady = false;
-    materialDBFehler = "Materialliste konnte nicht geladen werden (bitte online erneut versuchen)";
   }
 }
 
@@ -457,18 +424,16 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
 
   function zeigeSucheErgebnisse(q) {
     if (!materialDBReady) {
-      ergebnisListe.innerHTML = materialDBFehler
-        ? `<li class="no-result">${escapeHtml(materialDBFehler)}</li>`
-        : '<li class="no-result">Materialliste wird geladen…</li>';
+      ergebnisListe.innerHTML = '<li class="no-result">Materialliste wird geladen…</li>';
       ergebnisListe.hidden = false;
-      return;
-    }
-    if (q.trim().length < 2) {
-      ergebnisListe.hidden = true;
       return;
     }
     const treffer = sucheMaterial(q);
     ergebnisListe.innerHTML = "";
+    if (q.trim().length < 2) {
+      ergebnisListe.hidden = true;
+      return;
+    }
     if (treffer.length === 0) {
       ergebnisListe.innerHTML = '<li class="no-result">Keine Treffer – ggf. Freitext verwenden</li>';
       ergebnisListe.hidden = false;

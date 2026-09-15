@@ -9,7 +9,7 @@ DATANORM-Artikelliste oder frei eingetragen), Export als PDF.
 - Kundendaten, Ansprechpartner, Adresse, Baustelle/Bauvorhaben, Datum, Arbeitsbeschreibung
 - Material aus drei Quellen:
   - **Aus Liste**: Volltextsuche über den Materialstamm aus Ihrer DATANORM-Datei
-    (`materials-chunks/`, aktuell ca. 1,24 Mio. Artikel mit Artikelnummer,
+    (`materials.json`, aktuell ca. 16.500 Artikel mit Artikelnummer,
     Bezeichnung und Einheit – bewusst **ohne Preise**)
   - **Standardmaterial**: nach Kategorie durchsuchbare, kuratierte Liste
     typischer Elektro-Standardartikel (`standardmaterial.json`, aktuell 194
@@ -50,42 +50,21 @@ style.css       Design
 app.js          Logik (Formulare, Speicherung, PDF-Export)
 manifest.json   PWA-Manifest
 sw.js           Service Worker (Offline-Cache)
-materials-chunks/      Materialstamm "Aus Liste", aus Ihrer DATANORM-Datei erzeugt
-                       (mehrere Dateien, siehe unten)
+materials.json         Materialstamm "Aus Liste", aus Ihrer DATANORM-Datei erzeugt
 standardmaterial.json  Materialstamm "Standardmaterial", aus der Excel-Liste erzeugt
 icons/          App-Icons
 vendor/         jsPDF + jsPDF-AutoTable (lokal eingebunden, für Offline-PDF-Export)
-tools/datanorm_to_json.py         Skript zum (Neu-)Erzeugen von materials-chunks/ aus einer DATANORM-Datei
+tools/datanorm_to_json.py         Skript zum (Neu-)Erzeugen von materials.json aus einer DATANORM-Datei
 tools/standardmaterial_to_json.py Skript zum (Neu-)Erzeugen von standardmaterial.json aus der Excel-Liste
 ```
-
-### Warum `materials-chunks/` statt einer einzelnen `materials.json`
-
-Ihr aktueller DATANORM-Vollsortiments-Katalog hat ca. 1,24 Millionen Artikel
-(vorher, mit der kleineren Auswahlliste, waren es ca. 16.500). Als eine
-einzelne JSON-Datei wären das über 100 MB – zu groß für eine einzelne Datei
-bei GitHub (Limit: 100 MB pro Datei) und unnötig langsam beim ersten Laden.
-Das Umwandlungs-Skript erzeugt deshalb mehrere kleinere Dateien
-(`materials-chunk-0001.json` usw., je ca. 12 MB) plus eine
-`materials-manifest.json` mit einer Versionsnummer. Die App lädt beim Start
-alle Chunk-Dateien und hält sie wie zuvor als durchsuchbare Liste im
-Speicher (Laden + Such-Index aufbauen dauert unter 3 Sekunden). Der Service
-Worker cached die Chunk-Dateien wie jede andere Datei auch, sodass sie nur
-beim allerersten Start bzw. nach einem neuen Artikelstamm tatsächlich übers
-Netz geladen werden müssen – am besten also die erste Nutzung nach einem
-Update im WLAN machen.
 
 ## Materialstamm aktualisieren
 
 Wenn Sie eine neue DATANORM-Datei von Ihrem Großhändler bekommen:
 
 ```
-python3 tools/datanorm_to_json.py Datanorm.001 materials-chunks
+python3 tools/datanorm_to_json.py Datanorm.001 materials.json
 ```
-
-Das Skript überschreibt den Inhalt des Ordners `materials-chunks/` mit den
-neuen Chunk-Dateien und einer neuen `materials-manifest.json` (samt neuer
-Versionsnummer, damit die App die Änderung erkennt).
 
 Wenn Sie die Standardmaterial-Liste (Excel) erweitert oder geändert haben:
 
@@ -93,7 +72,7 @@ Wenn Sie die Standardmaterial-Liste (Excel) erweitert oder geändert haben:
 python3 tools/standardmaterial_to_json.py Standardmaterial.xlsx standardmaterial.json
 ```
 
-Danach jeweils in `sw.js` die `CACHE_VERSION` hochzählen (z. B. `aufmass-v7`),
+Danach jeweils in `sw.js` die `CACHE_VERSION` hochzählen (z. B. `aufmass-v5`),
 damit bereits installierte Apps die neue Datei laden, statt die alte aus dem
 Offline-Cache zu behalten.
 
@@ -131,11 +110,6 @@ so wird niemand mitten in der Eingabe überrascht.
 - Aus der DATANORM-Datei werden nur Artikelnummer, Bezeichnung und Einheit
   übernommen – Preise werden beim Einlesen bewusst nicht mit übernommen und
   tauchen weder in der App noch im PDF auf.
-- Der komplette Materialstamm "Aus Liste" muss einmalig (bzw. nach jedem
-  Update mit neuem Artikelstamm) komplett heruntergeladen werden (aktuell
-  ca. 100 MB) – das sollte möglichst im WLAN passieren. Danach läuft die
-  Suche auch offline auf der Baustelle, ohne dass die App die Daten erneut
-  herunterladen muss.
 - iOS/Safari öffnet ein per `doc.save()` erzeugtes PDF ggf. in einem neuen Tab
   statt es direkt herunterzuladen – von dort lässt es sich über „Teilen“
   speichern oder versenden.
