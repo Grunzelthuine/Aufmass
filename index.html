@@ -84,6 +84,7 @@
 
       <div class="tabs" role="tablist">
         <button class="tab active" data-tab="liste" role="tab">Aus Liste</button>
+        <button class="tab" data-tab="standard" role="tab">Standardmaterial</button>
         <button class="tab" data-tab="frei" role="tab">Freitext</button>
       </div>
 
@@ -102,6 +103,21 @@
           </label>
         </div>
         <button class="btn btn-secondary" id="btnAddListe" disabled>Hinzufügen</button>
+      </div>
+
+      <div id="tabStandard" class="tab-panel" hidden>
+        <input type="text" id="f_sucheStandard" placeholder="Suchen oder nach Kategorie durchsuchen…" autocomplete="off">
+        <div id="standardListe" class="standard-liste"></div>
+        <div id="ausgewaehlterArtikelStandard" class="selected-article" hidden></div>
+        <div class="field-grid two-col">
+          <label>Menge
+            <input type="number" id="f_mengeStandard" step="any" min="0" inputmode="decimal">
+          </label>
+          <label>Einheit
+            <input type="text" id="f_einheitStandard" readonly>
+          </label>
+        </div>
+        <button class="btn btn-secondary" id="btnAddStandard" disabled>Hinzufügen</button>
       </div>
 
       <div id="tabFrei" class="tab-panel" hidden>

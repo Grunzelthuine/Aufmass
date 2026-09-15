@@ -14,9 +14,12 @@ const btnNew = document.getElementById("btnNew");
 
 let aufmassListe = [];      // alle gespeicherten Aufmaße
 let currentAufmass = null;  // aktuell im Formular geöffnetes Aufmaß
-let materialDB = [];        // Materialstamm aus materials.json
+let materialDB = [];        // Materialstamm aus materials.json (DATANORM)
 let materialDBReady = false;
-let selectedArtikel = null; // aktuell in der Autocomplete gewähltes Listenmaterial
+let standardMaterialDB = [];      // Materialstamm aus standardmaterial.json
+let standardMaterialDBReady = false;
+let selectedArtikel = null;         // aktuell gewähltes Material (Tab "Aus Liste")
+let selectedStandardArtikel = null; // aktuell gewähltes Material (Tab "Standardmaterial")
 let saveTimer = null;
 
 /* ---------- Storage ---------- */
@@ -92,6 +95,15 @@ function formatDatumDE(iso) {
   return `${d}.${m}.${y}`;
 }
 
+// "m", "M", " m " etc. gelten als Meter-Einheit (für die Mengen-Zusatzeingabe).
+function istMeterEinheit(einheit) {
+  return (einheit || "").trim().toLowerCase() === "m";
+}
+
+function rundeMenge(n) {
+  return Math.round(n * 100) / 100;
+}
+
 function neuesAufmass() {
   return {
     id: neueId(),
@@ -140,11 +152,25 @@ function sucheMaterial(query, limit = 30) {
   return treffer;
 }
 
+async function ladeStandardMaterialDB() {
+  try {
+    const res = await fetch("standardmaterial.json");
+    const data = await res.json();
+    standardMaterialDB = data.map((a) => ({ ...a, _s: (a.k + " " + a.b).toLowerCase() }));
+    standardMaterialDBReady = true;
+  } catch (e) {
+    console.error("Standardmaterial-Liste konnte nicht geladen werden", e);
+    standardMaterialDB = [];
+    standardMaterialDBReady = false;
+  }
+}
+
 /* ---------- Navigation / Rendering ---------- */
 
 function zeigeUebersicht() {
   currentAufmass = null;
   selectedArtikel = null;
+  selectedStandardArtikel = null;
   headerTitle.textContent = "Material-Aufmaß";
   btnBack.hidden = true;
   btnNew.hidden = false;
@@ -192,6 +218,7 @@ function escapeHtml(str) {
 function oeffneFormular(aufmass) {
   currentAufmass = aufmass;
   selectedArtikel = null;
+  selectedStandardArtikel = null;
   headerTitle.textContent = "Aufmaß";
   btnBack.hidden = false;
   btnNew.hidden = true;
@@ -247,6 +274,7 @@ function bindeFormularEvents() {
       tab.classList.add("active");
       const ziel = tab.dataset.tab;
       document.getElementById("tabListe").hidden = ziel !== "liste";
+      document.getElementById("tabStandard").hidden = ziel !== "standard";
       document.getElementById("tabFrei").hidden = ziel !== "frei";
     });
   });
@@ -341,6 +369,104 @@ function bindeFormularEvents() {
     sucheInput.focus();
   });
 
+  // Standardmaterial (Kategorie-Liste aus standardmaterial.json)
+  const sucheStandardInput = document.getElementById("f_sucheStandard");
+  const standardListeEl = document.getElementById("standardListe");
+  const ausgewaehltStandard = document.getElementById("ausgewaehlterArtikelStandard");
+  const mengeStandard = document.getElementById("f_mengeStandard");
+  const einheitStandard = document.getElementById("f_einheitStandard");
+  const btnAddStandard = document.getElementById("btnAddStandard");
+
+  function aktualisiereAddStandardButton() {
+    const menge = parseFloat(mengeStandard.value);
+    btnAddStandard.disabled = !selectedStandardArtikel || !(menge > 0);
+  }
+
+  function waehleStandardArtikel(item) {
+    selectedStandardArtikel = item;
+    sucheStandardInput.value = item.b;
+    einheitStandard.value = item.e;
+    ausgewaehltStandard.hidden = false;
+    ausgewaehltStandard.innerHTML = `<strong>${escapeHtml(item.b)}</strong><span class="muted">${escapeHtml(item.k)} · ${escapeHtml(item.e)}</span>`;
+    mengeStandard.focus();
+    aktualisiereAddStandardButton();
+  }
+
+  function renderStandardListe(query) {
+    const q = (query || "").trim().toLowerCase();
+    const worte = q.split(/\s+/).filter(Boolean);
+    standardListeEl.innerHTML = "";
+
+    if (!standardMaterialDBReady) {
+      standardListeEl.innerHTML = '<div class="no-result">Standardmaterial-Liste wird geladen…</div>';
+      return;
+    }
+
+    let letzteKategorie = null;
+    let treffer = 0;
+    for (const item of standardMaterialDB) {
+      if (worte.length) {
+        let ok = true;
+        for (const w of worte) {
+          if (!item._s.includes(w)) { ok = false; break; }
+        }
+        if (!ok) continue;
+      }
+      if (item.k !== letzteKategorie) {
+        const h = document.createElement("div");
+        h.className = "kategorie-titel";
+        h.textContent = item.k || "Sonstiges";
+        standardListeEl.appendChild(h);
+        letzteKategorie = item.k;
+      }
+      const row = document.createElement("div");
+      row.className = "artikel-zeile";
+      row.innerHTML = `${escapeHtml(item.b)}<small>${escapeHtml(item.e)}</small>`;
+      row.addEventListener("click", () => waehleStandardArtikel(item));
+      standardListeEl.appendChild(row);
+      treffer++;
+    }
+    if (treffer === 0) {
+      standardListeEl.innerHTML = '<div class="no-result">Keine Treffer – ggf. Freitext verwenden</div>';
+    }
+  }
+
+  let sucheStandardTimer = null;
+  sucheStandardInput.addEventListener("input", () => {
+    clearTimeout(sucheStandardTimer);
+    selectedStandardArtikel = null;
+    ausgewaehltStandard.hidden = true;
+    aktualisiereAddStandardButton();
+    const q = sucheStandardInput.value;
+    sucheStandardTimer = setTimeout(() => renderStandardListe(q), 120);
+  });
+  mengeStandard.addEventListener("input", aktualisiereAddStandardButton);
+
+  btnAddStandard.addEventListener("click", () => {
+    if (!selectedStandardArtikel) return;
+    const menge = parseFloat(mengeStandard.value) || 0;
+    if (!(menge > 0)) return;
+    a.material.push({
+      id: neueId(),
+      bezeichnung: selectedStandardArtikel.b,
+      artikelnummer: "",
+      einheit: selectedStandardArtikel.e,
+      menge,
+      quelle: "standard"
+    });
+    selectedStandardArtikel = null;
+    sucheStandardInput.value = "";
+    mengeStandard.value = "";
+    einheitStandard.value = "";
+    ausgewaehltStandard.hidden = true;
+    aktualisiereAddStandardButton();
+    renderStandardListe("");
+    renderMaterialTabelle();
+    autosave();
+  });
+
+  renderStandardListe(""); // initial: komplette Liste nach Kategorie durchsuchbar anzeigen
+
   // Freitext
   const bezFrei = document.getElementById("f_bezeichnungFrei");
   const mengeFrei = document.getElementById("f_mengeFrei");
@@ -399,22 +525,67 @@ function renderMaterialTabelle() {
   a.material.forEach((m) => {
     const tr = document.createElement("tr");
     const sub = m.quelle === "liste" && m.artikelnummer ? `<div class="row-sub">Art.-Nr. ${escapeHtml(m.artikelnummer)}</div>` : "";
+    const meterZeile = istMeterEinheit(m.einheit)
+      ? `<div class="menge-add">
+           <input type="number" step="any" min="0" placeholder="+ m" class="menge-add-input" inputmode="decimal">
+           <button type="button" class="btn-qty-add">hinzufügen</button>
+         </div>`
+      : "";
     tr.innerHTML = `
       <td>${escapeHtml(m.bezeichnung)}${sub}</td>
-      <td class="col-menge"><input type="number" step="any" min="0" value="${m.menge}"></td>
+      <td class="col-menge">
+        <div class="menge-control">
+          <button type="button" class="btn-qty" data-action="dec" aria-label="Menge verringern">−</button>
+          <input type="number" step="any" min="0" value="${m.menge}" class="menge-input" inputmode="decimal">
+          <button type="button" class="btn-qty" data-action="inc" aria-label="Menge erhöhen">+</button>
+        </div>
+        ${meterZeile}
+      </td>
       <td>${escapeHtml(m.einheit)}</td>
       <td class="col-del"><button class="btn-danger-text" type="button">✕</button></td>
     `;
-    tr.querySelector("input").addEventListener("input", (e) => {
+
+    const mengeInput = tr.querySelector(".menge-input");
+    mengeInput.addEventListener("input", (e) => {
       const v = parseFloat(e.target.value);
       m.menge = isNaN(v) ? 0 : v;
       autosave();
     });
-    tr.querySelector("button").addEventListener("click", () => {
+
+    tr.querySelector('[data-action="dec"]').addEventListener("click", () => {
+      m.menge = Math.max(0, rundeMenge(m.menge - 1));
+      mengeInput.value = m.menge;
+      autosave();
+    });
+    tr.querySelector('[data-action="inc"]').addEventListener("click", () => {
+      m.menge = rundeMenge(m.menge + 1);
+      mengeInput.value = m.menge;
+      autosave();
+    });
+
+    const addInput = tr.querySelector(".menge-add-input");
+    if (addInput) {
+      const addBtn = tr.querySelector(".btn-qty-add");
+      const zusatzHinzufuegen = () => {
+        const zusatz = parseFloat(addInput.value);
+        if (!(zusatz > 0)) return;
+        m.menge = rundeMenge(m.menge + zusatz);
+        mengeInput.value = m.menge;
+        addInput.value = "";
+        autosave();
+      };
+      addBtn.addEventListener("click", zusatzHinzufuegen);
+      addInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); zusatzHinzufuegen(); }
+      });
+    }
+
+    tr.querySelector(".btn-danger-text").addEventListener("click", () => {
       currentAufmass.material = currentAufmass.material.filter((x) => x.id !== m.id);
       renderMaterialTabelle();
       autosave();
     });
+
     tbody.appendChild(tr);
   });
 }
@@ -532,6 +703,7 @@ btnNew.addEventListener("click", () => oeffneFormular(neuesAufmass()));
 
 ladeListe();
 ladeMaterialDB();
+ladeStandardMaterialDB();
 zeigeUebersicht();
 
 /* ---------- Service-Worker-Update ---------- */
