@@ -448,4 +448,13 @@ tr.zeile-gepackt .bez-text { text-decoration: line-through; }
 }
 .scanner-header .icon-btn { width: 32px; height: 32px; font-size: 1rem; }
 #scannerReader { width: 100%; background: #000; min-height: 260px; }
-.scanner-box .hint { text-align: center; padding: 10px 14px; margin: 0; }
+.scanner-box .hint { text-align: center; padding: 10px 14px 4px; margin: 0; }
+.scanner-manuell { padding: 8px 14px 14px; }
+.scanner-manuell label {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+.scanner-manuell-row { display: flex; gap: 6px; margin-top: 4px; }
+.scanner-manuell-row input { flex: 1; min-width: 0; }
+.scanner-manuell-row .btn { padding: 10px 14px; white-space: nowrap; }

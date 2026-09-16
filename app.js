@@ -216,19 +216,49 @@ function exportiereCustomStandardMaterial() {
    von der Verpackung wird also i. d. R. keinen Treffer liefern. */
 
 let html5QrcodeScanner = null;
+let barcodeScanErgebnisCallback = null;
 
 function oeffneBarcodeScanner(onErgebnis) {
   const overlay = document.getElementById("scannerOverlay");
   const hinweis = document.getElementById("scannerHinweis");
+  const manuellInput = document.getElementById("scannerManuellInput");
   if (typeof Html5Qrcode === "undefined") {
     alert("Barcode-Scanner konnte nicht geladen werden.");
     return;
   }
+  barcodeScanErgebnisCallback = onErgebnis;
   overlay.hidden = false;
   hinweis.textContent = "Kamera wird gestartet…";
+  manuellInput.value = "";
 
-  html5QrcodeScanner = new Html5Qrcode("scannerReader");
-  const config = { fps: 10, qrbox: { width: 250, height: 150 } };
+  // Explizit alle relevanten Formate anfordern (1D-Barcodes wie EAN/Code128
+  // UND QR), statt sich auf die Bibliotheks-Voreinstellung zu verlassen.
+  const formate = [
+    Html5QrcodeSupportedFormats.QR_CODE,
+    Html5QrcodeSupportedFormats.EAN_13,
+    Html5QrcodeSupportedFormats.EAN_8,
+    Html5QrcodeSupportedFormats.CODE_128,
+    Html5QrcodeSupportedFormats.CODE_39,
+    Html5QrcodeSupportedFormats.CODABAR,
+    Html5QrcodeSupportedFormats.ITF,
+    Html5QrcodeSupportedFormats.UPC_A,
+    Html5QrcodeSupportedFormats.UPC_E
+  ];
+  html5QrcodeScanner = new Html5Qrcode("scannerReader", { formatsToSupport: formate, verbose: false });
+
+  // Etwas höhere Kamera-Auflösung anfordern, damit auch dünne Strichcode-
+  // Balken (EAN/Code128) sauber aufgelöst werden – die Standardauflösung
+  // mancher Handykameras ist dafür zu niedrig. Breiterer, flacherer Scan-
+  // Rahmen passend zur Form eines 1D-Barcodes statt eines Quadrats.
+  const config = {
+    fps: 12,
+    qrbox: { width: 280, height: 130 },
+    videoConstraints: {
+      facingMode: "environment",
+      width: { ideal: 1920 },
+      height: { ideal: 1080 }
+    }
+  };
 
   html5QrcodeScanner
     .start(
@@ -240,6 +270,9 @@ function oeffneBarcodeScanner(onErgebnis) {
       },
       () => { /* laufender Frame ohne Treffer, kein Fehler */ }
     )
+    .then(() => {
+      hinweis.textContent = "Barcode in den Rahmen halten – ruhig, gut ausgeleuchtet und nah heranhalten.";
+    })
     .catch((err) => {
       hinweis.textContent = "Kamera konnte nicht gestartet werden (Berechtigung erteilt?).";
       console.error("Barcode-Scanner-Start fehlgeschlagen", err);
@@ -253,7 +286,17 @@ function schliesseBarcodeScanner() {
     html5QrcodeScanner = null;
     scanner.stop().then(() => scanner.clear()).catch(() => {});
   }
+  barcodeScanErgebnisCallback = null;
   overlay.hidden = true;
+}
+
+function barcodeManuellSuchen() {
+  const input = document.getElementById("scannerManuellInput");
+  const code = input.value.trim();
+  if (!code) { input.focus(); return; }
+  const callback = barcodeScanErgebnisCallback;
+  schliesseBarcodeScanner();
+  if (callback) callback(code);
 }
 
 function autosave() {
@@ -1331,6 +1374,15 @@ zeigeUebersicht();
 
 const btnScannerSchliessen = document.getElementById("btnScannerSchliessen");
 if (btnScannerSchliessen) btnScannerSchliessen.addEventListener("click", schliesseBarcodeScanner);
+
+const scannerManuellBtn = document.getElementById("scannerManuellBtn");
+const scannerManuellInput = document.getElementById("scannerManuellInput");
+if (scannerManuellBtn) {
+  scannerManuellBtn.addEventListener("click", barcodeManuellSuchen);
+  scannerManuellInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); barcodeManuellSuchen(); }
+  });
+}
 
 /* ---------- Service-Worker-Update ---------- */
 
