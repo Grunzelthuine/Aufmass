@@ -387,3 +387,65 @@ tr.zeile-gepackt .bez-text { text-decoration: line-through; }
   font-size: 0.9rem;
 }
 .update-banner .btn-secondary { padding: 8px 14px; font-size: 0.88rem; }
+
+.suche-mit-scan { display: flex; gap: 6px; }
+.suche-mit-scan input { flex: 1; min-width: 0; }
+.btn-scan {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-scan:active { background: #eef1f6; }
+
+.btn-link-accent {
+  background: none;
+  border: none;
+  color: var(--color-primary-light);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 6px 0;
+  text-align: left;
+  cursor: pointer;
+}
+.btn-link-accent:active { opacity: 0.7; }
+
+#standardExportHinweis a { color: var(--color-primary-light); font-weight: 600; }
+
+.scanner-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(10, 14, 22, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(16px + var(--safe-top)) 16px calc(16px + var(--safe-bottom));
+}
+.scanner-box {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 420px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.scanner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 600;
+}
+.scanner-header .icon-btn { width: 32px; height: 32px; font-size: 1rem; }
+#scannerReader { width: 100%; background: #000; min-height: 260px; }
+.scanner-box .hint { text-align: center; padding: 10px 14px; margin: 0; }

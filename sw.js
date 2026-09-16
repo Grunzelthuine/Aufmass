@@ -1,6 +1,6 @@
 // Service Worker für Material-Aufmaß App
 // Versionsnummer bei jedem Deploy mit Inhaltsänderungen erhöhen, damit Nutzer die neue Version bekommen.
-const CACHE_VERSION = "aufmass-v6";
+const CACHE_VERSION = "aufmass-v7";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -10,6 +10,7 @@ const CORE_ASSETS = [
   "./standardmaterial.json",
   "./vendor/jspdf.umd.min.js",
   "./vendor/jspdf.plugin.autotable.min.js",
+  "./vendor/html5-qrcode.min.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];

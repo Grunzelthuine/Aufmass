@@ -9,19 +9,31 @@
 
 const STORAGE_KEY = "aufmass_v1_liste";
 const STORAGE_KEY_PACKLISTEN = "aufmass_v1_packlisten";
+const STORAGE_KEY_FAVORITEN = "aufmass_v1_favoriten";
+const STORAGE_KEY_STANDARD_ERGAENZUNGEN = "aufmass_v1_standard_ergaenzungen";
 const app = document.getElementById("app");
 const headerTitle = document.getElementById("headerTitle");
 const btnBack = document.getElementById("btnBack");
 const btnNew = document.getElementById("btnNew");
 
+const STANDARD_KATEGORIEN = [
+  "Kabel & Leitungen", "Dosen", "Schalter & Steckdosen", "Sicherungstechnik & Verteiler",
+  "Beleuchtung & LED-Zubehör", "Leerrohre & Kanäle", "Verbindungs- & Befestigungsmaterial",
+  "Erdung & Blitzschutz", "Netzwerktechnik", "Sensorik & Steuerung",
+  "Kleinteile & Verbrauchsmaterial", "Sonstige Standardartikel"
+];
+
 let aufmassListe = [];      // alle gespeicherten Aufmaße
 let currentAufmass = null;  // aktuell im Formular geöffnetes Aufmaß
 let packlisten = [];          // alle gespeicherten Packlisten
 let currentPackliste = null;  // aktuell geöffnete Packliste
-let standardMaterialDB = [];      // Materialstamm aus standardmaterial.json
+let standardMaterialDB = [];      // Materialstamm aus standardmaterial.json + eigene Ergänzungen
 let standardMaterialDBReady = false;
 let selectedArtikel = null;         // aktuell gewähltes Material (Tab "Aus Liste")
 let selectedStandardArtikel = null; // aktuell gewähltes Material (Tab "Standardmaterial")
+let selectedFavoritArtikel = null;  // aktuell gewähltes Material (Tab "Favoriten")
+let favoritenCounts = {};           // Nutzungszähler für die selbstlernende Favoriten-Funktion
+let customStandardMaterial = [];    // vom Nutzer aus "Aus Liste" übernommene Standardmaterial-Ergänzungen
 let saveTimer = null;
 
 /* ---------- Storage ---------- */
@@ -101,6 +113,147 @@ function upsertCurrentPackliste() {
     packlisten.unshift(currentPackliste);
   }
   speicherePacklisten();
+}
+
+/* ---------- Favoriten (selbstlernend) ----------
+   Zählt bei jedem Hinzufügen aus "Aus Liste" oder "Standardmaterial", wie
+   oft ein Artikel verwendet wurde (global, unabhängig davon ob er in ein
+   Aufmaß oder eine Packliste eingetragen wird). Freitext wird bewusst nicht
+   gezählt, da jede Freitext-Position i. d. R. einmalig ist. */
+
+function ladeFavoriten() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_FAVORITEN);
+    favoritenCounts = raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    console.error("Favoriten konnten nicht geladen werden", e);
+    favoritenCounts = {};
+  }
+}
+
+function speichereFavoriten() {
+  try {
+    localStorage.setItem(STORAGE_KEY_FAVORITEN, JSON.stringify(favoritenCounts));
+  } catch (e) {
+    console.error("Favoriten konnten nicht gespeichert werden", e);
+  }
+}
+
+function favoritenSchluessel(quelle, artikelnummer, bezeichnung) {
+  if (quelle === "liste") return "liste:" + artikelnummer;
+  if (quelle === "standard") return "standard:" + bezeichnung;
+  return null;
+}
+
+function registriereFavoritTreffer(quelle, artikelnummer, bezeichnung, einheit) {
+  const key = favoritenSchluessel(quelle, artikelnummer, bezeichnung);
+  if (!key) return;
+  const eintrag = favoritenCounts[key] || { count: 0, quelle, artikelnummer: artikelnummer || "", bezeichnung, einheit };
+  eintrag.count += 1;
+  eintrag.bezeichnung = bezeichnung;
+  eintrag.einheit = einheit;
+  favoritenCounts[key] = eintrag;
+  speichereFavoriten();
+}
+
+function topFavoriten(limit = 20) {
+  return Object.values(favoritenCounts)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
+/* ---------- Eigene Standardmaterial-Ergänzungen ----------
+   Da die App rein lokal läuft (kein Server), werden Artikel, die der Nutzer
+   aus "Aus Liste" heraus zu "Standardmaterial" übernimmt, nur auf diesem
+   Gerät gespeichert und beim Laden mit standardmaterial.json zusammengeführt.
+   Über den Export-Link im Standardmaterial-Tab lassen sie sich als Datei
+   sichern, um sie dauerhaft in die zentrale standardmaterial.json einzupflegen. */
+
+function ladeCustomStandardMaterial() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_STANDARD_ERGAENZUNGEN);
+    customStandardMaterial = raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.error("Eigene Standardmaterial-Ergänzungen konnten nicht geladen werden", e);
+    customStandardMaterial = [];
+  }
+}
+
+function speichereCustomStandardMaterial() {
+  try {
+    localStorage.setItem(STORAGE_KEY_STANDARD_ERGAENZUNGEN, JSON.stringify(customStandardMaterial));
+  } catch (e) {
+    console.error("Eigene Standardmaterial-Ergänzungen konnten nicht gespeichert werden", e);
+  }
+}
+
+function nehmeInStandardmaterialAuf(kategorie, bezeichnung, einheit) {
+  const eintrag = { k: kategorie, b: bezeichnung, e: einheit, _eigen: true };
+  customStandardMaterial.push(eintrag);
+  speichereCustomStandardMaterial();
+  standardMaterialDB.push({ ...eintrag, _s: (kategorie + " " + bezeichnung).toLowerCase() });
+}
+
+function exportiereCustomStandardMaterial() {
+  const blob = new Blob([JSON.stringify(customStandardMaterial, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "standardmaterial-ergaenzungen.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/* ---------- Barcode-Scanner (Kamera) ----------
+   Nutzt die lokal eingebundene Bibliothek html5-qrcode (vendor/), die auch
+   in mobilem Safari/iOS ohne native Barcode-Detection-API funktioniert.
+   Scannt verschiedenste Formate (Code128, EAN-13/8, QR, ...). Das Ergebnis
+   wird zunächst als exakte Artikelnummer im DATANORM-Katalog gesucht;
+   Hinweis: der aktuelle Sonepar-Katalog enthält keine Hersteller-EAN,
+   sondern nur die interne Artikelnummer – ein Scan eines Herstellerbarcodes
+   von der Verpackung wird also i. d. R. keinen Treffer liefern. */
+
+let html5QrcodeScanner = null;
+
+function oeffneBarcodeScanner(onErgebnis) {
+  const overlay = document.getElementById("scannerOverlay");
+  const hinweis = document.getElementById("scannerHinweis");
+  if (typeof Html5Qrcode === "undefined") {
+    alert("Barcode-Scanner konnte nicht geladen werden.");
+    return;
+  }
+  overlay.hidden = false;
+  hinweis.textContent = "Kamera wird gestartet…";
+
+  html5QrcodeScanner = new Html5Qrcode("scannerReader");
+  const config = { fps: 10, qrbox: { width: 250, height: 150 } };
+
+  html5QrcodeScanner
+    .start(
+      { facingMode: "environment" },
+      config,
+      (decodedText) => {
+        schliesseBarcodeScanner();
+        onErgebnis(decodedText);
+      },
+      () => { /* laufender Frame ohne Treffer, kein Fehler */ }
+    )
+    .catch((err) => {
+      hinweis.textContent = "Kamera konnte nicht gestartet werden (Berechtigung erteilt?).";
+      console.error("Barcode-Scanner-Start fehlgeschlagen", err);
+    });
+}
+
+function schliesseBarcodeScanner() {
+  const overlay = document.getElementById("scannerOverlay");
+  if (html5QrcodeScanner) {
+    const scanner = html5QrcodeScanner;
+    html5QrcodeScanner = null;
+    scanner.stop().then(() => scanner.clear()).catch(() => {});
+  }
+  overlay.hidden = true;
 }
 
 function autosave() {
@@ -240,7 +393,8 @@ async function ladeStandardMaterialDB() {
   try {
     const res = await fetch("standardmaterial.json");
     const data = await res.json();
-    standardMaterialDB = data.map((a) => ({ ...a, _s: (a.k + " " + a.b).toLowerCase() }));
+    const kombiniert = data.concat(customStandardMaterial);
+    standardMaterialDB = kombiniert.map((a) => ({ ...a, _s: (a.k + " " + a.b).toLowerCase() }));
     standardMaterialDBReady = true;
   } catch (e) {
     console.error("Standardmaterial-Liste konnte nicht geladen werden", e);
@@ -256,6 +410,7 @@ function zeigeUebersicht() {
   currentPackliste = null;
   selectedArtikel = null;
   selectedStandardArtikel = null;
+  selectedFavoritArtikel = null;
   headerTitle.textContent = "Material-Aufmaß";
   btnBack.hidden = true;
   btnNew.hidden = false;
@@ -333,6 +488,7 @@ function oeffneFormular(aufmass) {
   currentPackliste = null;
   selectedArtikel = null;
   selectedStandardArtikel = null;
+  selectedFavoritArtikel = null;
   headerTitle.textContent = "Aufmaß";
   btnBack.hidden = false;
   btnNew.hidden = true;
@@ -424,11 +580,77 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
       tabs.forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
       const ziel = tab.dataset.tab;
+      document.getElementById("tabFavoriten").hidden = ziel !== "favoriten";
       document.getElementById("tabListe").hidden = ziel !== "liste";
       document.getElementById("tabStandard").hidden = ziel !== "standard";
       document.getElementById("tabFrei").hidden = ziel !== "frei";
+      if (ziel === "favoriten") renderFavoritenListe();
     });
   });
+
+  // Favoriten (selbstlernend, siehe registriereFavoritTreffer/topFavoriten oben)
+  const favoritenListeEl = document.getElementById("favoritenListe");
+  const favoritenLeerHinweis = document.getElementById("favoritenLeerHinweis");
+  const ausgewaehltFavorit = document.getElementById("ausgewaehlterArtikelFavorit");
+  const mengeFavorit = document.getElementById("f_mengeFavorit");
+  const einheitFavorit = document.getElementById("f_einheitFavorit");
+  const btnAddFavorit = document.getElementById("btnAddFavorit");
+
+  function aktualisiereAddFavoritButton() {
+    const menge = parseFloat(mengeFavorit.value);
+    btnAddFavorit.disabled = !selectedFavoritArtikel || !(menge > 0);
+  }
+
+  function waehleFavorit(item) {
+    selectedFavoritArtikel = item;
+    einheitFavorit.value = item.einheit;
+    ausgewaehltFavorit.hidden = false;
+    const subInfo = item.quelle === "liste" && item.artikelnummer ? `Art.-Nr. ${escapeHtml(item.artikelnummer)} · ` : "";
+    ausgewaehltFavorit.innerHTML = `<strong>${escapeHtml(item.bezeichnung)}</strong><span class="muted">${subInfo}${escapeHtml(item.einheit)}</span>`;
+    mengeFavorit.focus();
+    aktualisiereAddFavoritButton();
+  }
+
+  function renderFavoritenListe() {
+    const top = topFavoriten(20);
+    favoritenListeEl.innerHTML = "";
+    favoritenLeerHinweis.hidden = top.length !== 0;
+    for (const item of top) {
+      const row = document.createElement("div");
+      row.className = "artikel-zeile";
+      const subInfo = item.quelle === "liste" && item.artikelnummer ? `Art.-Nr. ${escapeHtml(item.artikelnummer)} · ` : "";
+      row.innerHTML = `${escapeHtml(item.bezeichnung)}<small>${subInfo}${escapeHtml(item.einheit)}</small>`;
+      row.addEventListener("click", () => waehleFavorit(item));
+      favoritenListeEl.appendChild(row);
+    }
+  }
+
+  mengeFavorit.addEventListener("input", aktualisiereAddFavoritButton);
+
+  btnAddFavorit.addEventListener("click", () => {
+    if (!selectedFavoritArtikel) return;
+    const menge = parseFloat(mengeFavorit.value) || 0;
+    if (!(menge > 0)) return;
+    material.push({
+      id: neueId(),
+      bezeichnung: selectedFavoritArtikel.bezeichnung,
+      artikelnummer: selectedFavoritArtikel.quelle === "liste" ? selectedFavoritArtikel.artikelnummer : "",
+      einheit: selectedFavoritArtikel.einheit,
+      menge,
+      quelle: selectedFavoritArtikel.quelle,
+      erledigt: false
+    });
+    registriereFavoritTreffer(selectedFavoritArtikel.quelle, selectedFavoritArtikel.artikelnummer, selectedFavoritArtikel.bezeichnung, selectedFavoritArtikel.einheit);
+    selectedFavoritArtikel = null;
+    mengeFavorit.value = "";
+    einheitFavorit.value = "";
+    ausgewaehltFavorit.hidden = true;
+    aktualisiereAddFavoritButton();
+    renderFavoritenListe();
+    onHinzufuegen();
+  });
+
+  renderFavoritenListe();
 
   // Autocomplete
   const sucheInput = document.getElementById("f_suche");
@@ -437,11 +659,24 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
   const mengeListe = document.getElementById("f_mengeListe");
   const einheitListe = document.getElementById("f_einheitListe");
   const btnAddListe = document.getElementById("btnAddListe");
+  const btnBarcodeScan = document.getElementById("btnBarcodeScan");
+  const btnZuStandardOeffnen = document.getElementById("btnZuStandardOeffnen");
+  const standardUebernahmeForm = document.getElementById("standardUebernahmeForm");
+  const suKategorie = document.getElementById("su_kategorie");
+  const suKategorieNeuWrap = document.getElementById("su_kategorieNeuWrap");
+  const suKategorieNeu = document.getElementById("su_kategorieNeu");
+  const suBezeichnung = document.getElementById("su_bezeichnung");
+  const suEinheit = document.getElementById("su_einheit");
+  const suUebernehmen = document.getElementById("su_uebernehmen");
+  const suAbbrechen = document.getElementById("su_abbrechen");
+  const suBestaetigung = document.getElementById("su_bestaetigung");
 
   let sucheTimer = null;
   sucheInput.addEventListener("input", () => {
     clearTimeout(sucheTimer);
     selectedArtikel = null;
+    btnZuStandardOeffnen.hidden = true;
+    standardUebernahmeForm.hidden = true;
     aktualisiereAddListeButton();
     const q = sucheInput.value;
     sucheTimer = setTimeout(() => zeigeSucheErgebnisse(q), 120);
@@ -484,6 +719,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
         einheitListe.value = item.e;
         ausgewaehlt.hidden = false;
         ausgewaehlt.innerHTML = `<strong>${escapeHtml(item.b)}</strong><span class="muted">Art.-Nr. ${escapeHtml(item.n)} · ${escapeHtml(item.e)}</span>`;
+        btnZuStandardOeffnen.hidden = false;
+        standardUebernahmeForm.hidden = true;
         mengeListe.focus();
         aktualisiereAddListeButton();
       });
@@ -511,24 +748,122 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
       quelle: "liste",
       erledigt: false
     });
+    registriereFavoritTreffer("liste", selectedArtikel.n, selectedArtikel.b, selectedArtikel.e);
     // Reset
     selectedArtikel = null;
     sucheInput.value = "";
     mengeListe.value = "";
     einheitListe.value = "";
     ausgewaehlt.hidden = true;
+    btnZuStandardOeffnen.hidden = true;
+    standardUebernahmeForm.hidden = true;
     aktualisiereAddListeButton();
     onHinzufuegen();
     sucheInput.focus();
   });
 
-  // Standardmaterial (Kategorie-Liste aus standardmaterial.json)
+  // Barcode-Scan: Ergebnis erst als exakte Artikelnummer suchen, sonst wie
+  // eine normale Textsuche behandeln (z. B. bei Teil-Übereinstimmungen).
+  btnBarcodeScan.addEventListener("click", () => {
+    oeffneBarcodeScanner((code) => {
+      sucheInput.value = code;
+      const exakt = materialDB.find((item) => item.n === code);
+      if (exakt) {
+        selectedArtikel = exakt;
+        einheitListe.value = exakt.e;
+        ausgewaehlt.hidden = false;
+        ausgewaehlt.innerHTML = `<strong>${escapeHtml(exakt.b)}</strong><span class="muted">Art.-Nr. ${escapeHtml(exakt.n)} · ${escapeHtml(exakt.e)}</span>`;
+        btnZuStandardOeffnen.hidden = false;
+        standardUebernahmeForm.hidden = true;
+        ergebnisListe.hidden = true;
+        mengeListe.focus();
+        aktualisiereAddListeButton();
+      } else {
+        zeigeSucheErgebnisse(code);
+      }
+    });
+  });
+
+  // "Zu Standardmaterial übernehmen": lokal gespeicherte Ergänzung, siehe
+  // nehmeInStandardmaterialAuf() weiter oben.
+  function fuelleKategorieOptionen() {
+    suKategorie.innerHTML = "";
+    for (const k of STANDARD_KATEGORIEN) {
+      const opt = document.createElement("option");
+      opt.value = k;
+      opt.textContent = k;
+      suKategorie.appendChild(opt);
+    }
+    const optNeu = document.createElement("option");
+    optNeu.value = "__neu__";
+    optNeu.textContent = "➕ Andere / neue Kategorie…";
+    suKategorie.appendChild(optNeu);
+  }
+
+  suKategorie.addEventListener("change", () => {
+    suKategorieNeuWrap.hidden = suKategorie.value !== "__neu__";
+  });
+
+  btnZuStandardOeffnen.addEventListener("click", () => {
+    if (!selectedArtikel) return;
+    fuelleKategorieOptionen();
+    suKategorie.value = "Sonstige Standardartikel";
+    suKategorieNeuWrap.hidden = true;
+    suKategorieNeu.value = "";
+    suBezeichnung.value = selectedArtikel.b;
+    suEinheit.value = selectedArtikel.e;
+    suBestaetigung.hidden = true;
+    standardUebernahmeForm.hidden = false;
+    btnZuStandardOeffnen.hidden = true;
+  });
+
+  suAbbrechen.addEventListener("click", () => {
+    standardUebernahmeForm.hidden = true;
+    btnZuStandardOeffnen.hidden = false;
+  });
+
+  suUebernehmen.addEventListener("click", () => {
+    const bezeichnung = suBezeichnung.value.trim();
+    const einheit = suEinheit.value.trim() || "Stk";
+    if (!bezeichnung) { suBezeichnung.focus(); return; }
+    let kategorie = suKategorie.value;
+    if (kategorie === "__neu__") {
+      kategorie = suKategorieNeu.value.trim();
+      if (!kategorie) { suKategorieNeu.focus(); return; }
+    }
+    nehmeInStandardmaterialAuf(kategorie, bezeichnung, einheit);
+    aktualisiereStandardExportHinweis();
+    renderStandardListe(sucheStandardInput.value);
+    suBestaetigung.hidden = false;
+    setTimeout(() => {
+      standardUebernahmeForm.hidden = true;
+      btnZuStandardOeffnen.hidden = false;
+    }, 1200);
+  });
+
+  // Standardmaterial (Kategorie-Liste aus standardmaterial.json + eigene Ergänzungen)
   const sucheStandardInput = document.getElementById("f_sucheStandard");
   const standardListeEl = document.getElementById("standardListe");
   const ausgewaehltStandard = document.getElementById("ausgewaehlterArtikelStandard");
   const mengeStandard = document.getElementById("f_mengeStandard");
   const einheitStandard = document.getElementById("f_einheitStandard");
   const btnAddStandard = document.getElementById("btnAddStandard");
+  const standardExportHinweis = document.getElementById("standardExportHinweis");
+
+  function aktualisiereStandardExportHinweis() {
+    if (customStandardMaterial.length === 0) {
+      standardExportHinweis.hidden = true;
+      return;
+    }
+    standardExportHinweis.hidden = false;
+    const anzahlText = customStandardMaterial.length === 1 ? "1 eigene Ergänzung" : `${customStandardMaterial.length} eigene Ergänzungen`;
+    standardExportHinweis.innerHTML = `${anzahlText} aus „Aus Liste“ übernommen. <a href="#" id="standardExportLink">Als Datei exportieren</a>`;
+    document.getElementById("standardExportLink").addEventListener("click", (e) => {
+      e.preventDefault();
+      exportiereCustomStandardMaterial();
+    });
+  }
+  aktualisiereStandardExportHinweis();
 
   function aktualisiereAddStandardButton() {
     const menge = parseFloat(mengeStandard.value);
@@ -574,7 +909,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
       }
       const row = document.createElement("div");
       row.className = "artikel-zeile";
-      row.innerHTML = `${escapeHtml(item.b)}<small>${escapeHtml(item.e)}</small>`;
+      const eigenHinweis = item._eigen ? " · eigene Ergänzung" : "";
+      row.innerHTML = `${escapeHtml(item.b)}<small>${escapeHtml(item.e)}${eigenHinweis}</small>`;
       row.addEventListener("click", () => waehleStandardArtikel(item));
       standardListeEl.appendChild(row);
       treffer++;
@@ -608,6 +944,7 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
       quelle: "standard",
       erledigt: false
     });
+    registriereFavoritTreffer("standard", "", selectedStandardArtikel.b, selectedStandardArtikel.e);
     selectedStandardArtikel = null;
     sucheStandardInput.value = "";
     mengeStandard.value = "";
@@ -757,6 +1094,7 @@ function oeffnePackliste(packliste) {
   currentAufmass = null;
   selectedArtikel = null;
   selectedStandardArtikel = null;
+  selectedFavoritArtikel = null;
   headerTitle.textContent = "Packliste";
   btnBack.hidden = false;
   btnNew.hidden = true;
@@ -985,9 +1323,14 @@ btnNew.addEventListener("click", () => oeffneFormular(neuesAufmass()));
 
 ladeListe();
 ladePacklisten();
+ladeFavoriten();
+ladeCustomStandardMaterial();
 ladeMaterialDB();
 ladeStandardMaterialDB();
 zeigeUebersicht();
+
+const btnScannerSchliessen = document.getElementById("btnScannerSchliessen");
+if (btnScannerSchliessen) btnScannerSchliessen.addEventListener("click", schliesseBarcodeScanner);
 
 /* ---------- Service-Worker-Update ---------- */
 

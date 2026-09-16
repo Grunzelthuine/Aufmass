@@ -34,13 +34,37 @@ DATANORM-Artikelliste oder frei eingetragen), Export als PDF.
 - **Packlisten**: eigener Bereich auf der Übersichtsseite (eigenes „+“ neben
   „Packlisten“), unabhängig von den Aufmaßen. Eine Packliste hat eine freie
   Bezeichnung (z. B. „Baustelle Müller / KW38“) und ein Datum und greift auf
-  dieselben drei Materialquellen zu wie ein Aufmaß (Aus Liste, Standardmaterial,
-  Freitext) – inklusive der Mengen-Plus-/Minus-Buttons und der „+m“-Zusatzeingabe.
+  dieselben Materialquellen zu wie ein Aufmaß – inklusive der Mengen-Plus-/
+  Minus-Buttons und der „+m“-Zusatzeingabe.
   Jede Position lässt sich über einen Haken abhaken, sobald sie in den Bulli
   gepackt wurde; abgehakte Positionen wandern in einen einklappbaren Bereich
   „Bereits gepackt“ statt gelöscht zu werden, lassen sich also jederzeit wieder
   zurückholen. Packlisten werden wie Aufmaße automatisch lokal gespeichert,
   haben aber keinen eigenen PDF-Export.
+- **Favoriten** (vierter Tab bei „Material hinzufügen“): lernt selbstständig,
+  welche Artikel aus „Aus Liste“ und „Standardmaterial“ am häufigsten
+  hinzugefügt werden (global über alle Aufmaße/Packlisten gezählt, Freitext
+  wird nicht gezählt) und zeigt die Top-Treffer als eigenen, schnell
+  antippbaren Tab. Die Zähler werden lokal auf dem Gerät gespeichert.
+- **Barcode-Scanner** (Kamera-Symbol neben dem Suchfeld in „Aus Liste“):
+  öffnet die Gerätekamera und liest Barcodes (Code128, EAN, QR u. a.) über
+  die lokal eingebundene Bibliothek `html5-qrcode`. Der gelesene Code wird
+  zunächst als exakte Artikelnummer im DATANORM-Katalog gesucht; ohne Treffer
+  läuft er als normale Textsuche weiter. **Wichtig:** der aktuelle
+  Sonepar-Katalog enthält nur die interne Artikelnummer, keine
+  Hersteller-EAN – ein Barcode von der Originalverpackung liefert daher meist
+  keinen Treffer. Funktioniert zuverlässig mit Barcodes, die die
+  Artikelnummer selbst codieren (z. B. auf Sonepar-eigenen Etiketten/
+  Lieferscheinen, sofern vorhanden) oder mit selbst erzeugten Codes.
+- **Standardmaterial aus „Aus Liste“ übernehmen**: bei einem ausgewählten
+  DATANORM-Artikel erscheint der Link „+ Zu Standardmaterial übernehmen“ –
+  Kategorie wählen (oder eine neue eingeben), Bezeichnung/Einheit bei Bedarf
+  anpassen, übernehmen. Die Ergänzung ist sofort im Standardmaterial-Tab
+  suchbar. Da die App keinen Server hat, werden solche Ergänzungen nur lokal
+  auf dem jeweiligen Gerät gespeichert; über den Link „Als Datei
+  exportieren“ im Standardmaterial-Tab lassen sie sich als JSON-Datei
+  sichern, um sie dauerhaft in die zentrale `standardmaterial.json`
+  einzupflegen (z. B. für die Nutzung auf mehreren Geräten).
 
 ## Struktur
 
@@ -54,7 +78,8 @@ materials-chunks/      Materialstamm "Aus Liste", aus Ihrer DATANORM-Datei erzeu
                        (mehrere Dateien, siehe unten)
 standardmaterial.json  Materialstamm "Standardmaterial", aus der Excel-Liste erzeugt
 icons/          App-Icons
-vendor/         jsPDF + jsPDF-AutoTable (lokal eingebunden, für Offline-PDF-Export)
+vendor/         jsPDF + jsPDF-AutoTable (PDF-Export) + html5-qrcode (Barcode-Scanner),
+                jeweils lokal eingebunden, funktionieren offline
 tools/datanorm_to_json.py         Skript zum (Neu-)Erzeugen von materials-chunks/ aus einer DATANORM-Datei
 tools/standardmaterial_to_json.py Skript zum (Neu-)Erzeugen von standardmaterial.json aus der Excel-Liste
 ```
@@ -93,7 +118,7 @@ Wenn Sie die Standardmaterial-Liste (Excel) erweitert oder geändert haben:
 python3 tools/standardmaterial_to_json.py Standardmaterial.xlsx standardmaterial.json
 ```
 
-Danach jeweils in `sw.js` die `CACHE_VERSION` hochzählen (z. B. `aufmass-v7`),
+Danach jeweils in `sw.js` die `CACHE_VERSION` hochzählen (z. B. `aufmass-v8`),
 damit bereits installierte Apps die neue Datei laden, statt die alte aus dem
 Offline-Cache zu behalten.
 

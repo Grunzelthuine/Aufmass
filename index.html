@@ -29,6 +29,17 @@
   <button id="btnUpdate" class="btn btn-secondary">Jetzt aktualisieren</button>
 </div>
 
+<div id="scannerOverlay" class="scanner-overlay" hidden>
+  <div class="scanner-box">
+    <div class="scanner-header">
+      <span>Barcode scannen</span>
+      <button type="button" id="btnScannerSchliessen" class="icon-btn" aria-label="Schließen">✕</button>
+    </div>
+    <div id="scannerReader"></div>
+    <p id="scannerHinweis" class="hint">Kamera wird gestartet…</p>
+  </div>
+</div>
+
 <!-- Vorlage: Übersicht -->
 <template id="tpl-uebersicht">
   <section class="view">
@@ -120,20 +131,63 @@
   </section>
 </template>
 
-<!-- Wiederverwendbarer Baustein: Material hinzufügen (Tabs Aus Liste / Standardmaterial / Freitext) -->
+<!-- Wiederverwendbarer Baustein: Material hinzufügen (Tabs Favoriten / Aus Liste / Standardmaterial / Freitext) -->
 <template id="tpl-material-tabs">
   <div class="tabs" role="tablist">
+    <button class="tab" data-tab="favoriten" role="tab">Favoriten</button>
     <button class="tab active" data-tab="liste" role="tab">Aus Liste</button>
     <button class="tab" data-tab="standard" role="tab">Standardmaterial</button>
     <button class="tab" data-tab="frei" role="tab">Freitext</button>
   </div>
 
+  <div id="tabFavoriten" class="tab-panel" hidden>
+    <p class="hint" id="favoritenLeerHinweis" hidden>Noch keine Favoriten – wird automatisch anhand häufig verwendeter Artikel befüllt, sobald du Material aus „Aus Liste“ oder „Standardmaterial“ hinzufügst.</p>
+    <div id="favoritenListe" class="standard-liste"></div>
+    <div id="ausgewaehlterArtikelFavorit" class="selected-article" hidden></div>
+    <div class="field-grid two-col">
+      <label>Menge
+        <input type="number" id="f_mengeFavorit" step="any" min="0" inputmode="decimal">
+      </label>
+      <label>Einheit
+        <input type="text" id="f_einheitFavorit" readonly>
+      </label>
+    </div>
+    <button class="btn btn-secondary" id="btnAddFavorit" disabled>Hinzufügen</button>
+  </div>
+
   <div id="tabListe" class="tab-panel">
     <div class="autocomplete">
-      <input type="text" id="f_suche" placeholder="Artikel suchen (Name oder Art.-Nr.)" autocomplete="off">
+      <div class="suche-mit-scan">
+        <input type="text" id="f_suche" placeholder="Artikel suchen (Name oder Art.-Nr.)" autocomplete="off">
+        <button type="button" class="btn-scan" id="btnBarcodeScan" aria-label="Barcode scannen">📷</button>
+      </div>
       <ul id="sucheErgebnisse" class="suggest-list" hidden></ul>
     </div>
     <div id="ausgewaehlterArtikel" class="selected-article" hidden></div>
+    <button type="button" class="btn-link-accent" id="btnZuStandardOeffnen" hidden>+ Zu Standardmaterial übernehmen</button>
+    <div id="standardUebernahmeForm" class="selected-article" hidden>
+      <label>Kategorie
+        <select id="su_kategorie"></select>
+      </label>
+      <div id="su_kategorieNeuWrap" class="field-grid" hidden>
+        <label>Neue Kategorie
+          <input type="text" id="su_kategorieNeu" placeholder="Name der neuen Kategorie">
+        </label>
+      </div>
+      <div class="field-grid two-col" style="margin-top:8px">
+        <label>Bezeichnung
+          <input type="text" id="su_bezeichnung">
+        </label>
+        <label>Einheit
+          <input type="text" id="su_einheit">
+        </label>
+      </div>
+      <div class="action-bar" style="margin-top:8px">
+        <button type="button" class="btn btn-secondary" id="su_uebernehmen">Übernehmen</button>
+        <button type="button" class="btn-danger-text" id="su_abbrechen">Abbrechen</button>
+      </div>
+      <p class="hint" id="su_bestaetigung" hidden>✓ Zu Standardmaterial hinzugefügt.</p>
+    </div>
     <div class="field-grid two-col">
       <label>Menge
         <input type="number" id="f_mengeListe" step="any" min="0" inputmode="decimal">
@@ -146,6 +200,7 @@
   </div>
 
   <div id="tabStandard" class="tab-panel" hidden>
+    <p class="hint" id="standardExportHinweis" hidden></p>
     <input type="text" id="f_sucheStandard" placeholder="Suchen oder nach Kategorie durchsuchen…" autocomplete="off">
     <div id="standardListe" class="standard-liste"></div>
     <div id="ausgewaehlterArtikelStandard" class="selected-article" hidden></div>
@@ -242,6 +297,7 @@
 
 <script src="vendor/jspdf.umd.min.js"></script>
 <script src="vendor/jspdf.plugin.autotable.min.js"></script>
+<script src="vendor/html5-qrcode.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
