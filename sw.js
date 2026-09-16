@@ -1,19 +1,25 @@
 // Service Worker für Material-Aufmaß App
 // Versionsnummer bei jedem Deploy mit Inhaltsänderungen erhöhen, damit Nutzer die neue Version bekommen.
-const CACHE_VERSION = "aufmass-v5";
+const CACHE_VERSION = "aufmass-v6";
 const CORE_ASSETS = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
   "./manifest.json",
-  "./materials.json",
   "./standardmaterial.json",
   "./vendor/jspdf.umd.min.js",
   "./vendor/jspdf.plugin.autotable.min.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
+// Die "Aus Liste"-Materialdaten (materials-chunks/*, insgesamt ca. 100 MB)
+// werden bewusst NICHT hier in CORE_ASSETS vorab beim Install geladen –
+// das könnte die Installation auf einer langsamen/instabilen Verbindung
+// zum Scheitern bringen. Stattdessen fragt app.js sie beim Start ganz normal
+// per fetch() ab; der generische Cache-first-Handler unten cached sie dabei
+// wie jede andere Datei auch, sodass sie ab dem zweiten Start aus dem Cache
+// kommen (auch offline) und nicht erneut heruntergeladen werden müssen.
 
 self.addEventListener("install", (event) => {
   // Bewusst KEIN self.skipWaiting() hier: eine neue Version soll erst
