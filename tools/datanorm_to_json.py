@@ -13,9 +13,14 @@ Erzeugt im Ausgabeordner:
     materials-chunk-0002.json
     ...
 
+Jeder Artikel: {"n": Artikelnummer, "b": Bezeichnung, "e": Einheit,
+                "g": EAN/GTIN}  – "g" nur, wenn im B-Satz eine EAN steht.
+
 Hinweise:
-- Es wird nur die Hauptdatei (A-Sätze) ausgewertet: Artikelnummer, Kurztext 1+2
-  und Mengeneinheit. Preise werden bewusst NICHT übernommen (die App zeigt
+- Es wird nur die Hauptdatei ausgewertet: aus den A-Sätzen Artikelnummer,
+  Kurztext 1+2 und Mengeneinheit, aus den B-Sätzen ("Artikel Teil 2") die
+  Hersteller-EAN (Feld 10). Die EAN wird vom Barcode-Scanner der App genutzt,
+  um Barcodes von Originalverpackungen einem Artikel zuzuordnen. Preise werden bewusst NICHT übernommen (die App zeigt
   keine Preise und keine Summen an) – eine DatPreis.xxx-Datei wird daher nicht
   benötigt.
 - Encoding: DATANORM-Dateien sind i. d. R. in CP850 (DOS/westeuropäisch)
@@ -23,13 +28,10 @@ Hinweise:
 - Warum mehrere Chunk-Dateien statt einer materials.json wie früher: bei sehr
   großen Vollsortiment-Katalogen (mehrere hunderttausend bis über eine Million
   Artikel) würde eine einzelne JSON-Datei zu groß für GitHub (Limit 100 MB pro
-  Datei) und zu langsam zum Laden auf dem iPhone. Die App liest die Chunks
-  daher einmalig ein und baut daraus eine lokale IndexedDB-Datenbank auf dem
-  Gerät auf; danach werden die Chunk-Dateien nicht mehr benötigt.
-- Die "version" im Manifest ist ein Hash über den gesamten Artikelbestand.
-  Ändert sich der Bestand (neue DATANORM-Datei), ändert sich automatisch auch
-  die Version, und die App erkennt beim nächsten Start, dass sie ihre lokale
-  Datenbank aktualisieren muss.
+  Datei). Die App lädt alle Chunks beim Start und hält den Katalog als Array
+  im Speicher; der Service Worker cached die Chunks für den Offline-Betrieb.
+- Die "version" im Manifest ist ein Hash über den gesamten Artikelbestand
+  (inkl. EAN) – rein informativ, ändert sich bei jedem neuen Bestand.
 - Wenn ein neuer Artikelstamm vom Großhändler kommt: einfach dieses Skript
   erneut mit der neuen Datanorm-Datei ausführen, die alten
   materials-manifest.json / materials-chunk-*.json in der App durch die neuen
@@ -43,12 +45,31 @@ import sys
 ARTIKEL_PRO_CHUNK = 150_000
 
 
+def ist_ean(wert):
+    """8-14 Ziffern (EAN-8, UPC-A, EAN-13, GTIN-14). Die Prüfziffer wird bewusst
+    nicht erzwungen: auch eine vom Hersteller falsch berechnete EAN steht so auf
+    der Verpackung und soll beim Scannen trotzdem gefunden werden."""
+    return wert.isdigit() and 8 <= len(wert) <= 14
+
+
 def parse(path, encoding="cp850"):
     artikel = []
+    eans = {}  # Artikelnummer -> EAN aus den B-Sätzen
     with open(path, "r", encoding=encoding, errors="replace") as f:
         for line in f:
             line = line.rstrip("\r\n")
-            if not line or line[0] != "A":
+            if not line:
+                continue
+            satzart = line[0]
+            if satzart == "B":
+                p = line.split(";")
+                if len(p) >= 10:
+                    nr = p[2].strip()
+                    ean = p[9].strip()
+                    if nr and ist_ean(ean):
+                        eans[nr] = ean
+                continue
+            if satzart != "A":
                 continue
             p = line.split(";")
             if len(p) < 9:
@@ -61,6 +82,10 @@ def parse(path, encoding="cp850"):
             if not nr or not bezeichnung:
                 continue
             artikel.append({"n": nr, "b": bezeichnung, "e": einheit})
+    for a in artikel:
+        ean = eans.get(a["n"])
+        if ean:
+            a["g"] = ean
     return artikel
 
 
@@ -71,7 +96,7 @@ def schreibe_chunks(artikel, zielordner):
     # die Version bei jeder inhaltlichen Änderung ändert (neue/andere Artikel).
     hasher = hashlib.sha256()
     for a in artikel:
-        hasher.update(f"{a['n']}\x1f{a['b']}\x1f{a['e']}\n".encode("utf-8"))
+        hasher.update(f"{a['n']}\x1f{a['b']}\x1f{a['e']}\x1f{a.get('g', '')}\n".encode("utf-8"))
     version = hasher.hexdigest()[:16]
 
     chunk_dateien = []
@@ -109,7 +134,9 @@ def main():
     if not artikel:
         sys.exit("Keine Artikel (A-Sätze) in der Datei gefunden – Encoding/Format prüfen.")
     manifest = schreibe_chunks(artikel, zielordner)
-    print(f"\n{manifest['count']} Artikel in {len(manifest['chunks'])} Chunk(s) geschrieben nach {zielordner}")
+    mit_ean = sum(1 for a in artikel if "g" in a)
+    print(f"\n{mit_ean} von {manifest['count']} Artikeln mit EAN")
+    print(f"{manifest['count']} Artikel in {len(manifest['chunks'])} Chunk(s) geschrieben nach {zielordner}")
     print(f"Version: {manifest['version']}")
 
 

@@ -3,7 +3,7 @@
 /* ============================================================
    Material-Aufmaß App
    Speicherung: localStorage (rein lokal auf dem Gerät)
-   Materialstamm "Aus Liste": DATANORM-Katalog, via IndexedDB (siehe unten)
+   Materialstamm "Aus Liste": DATANORM-Katalog (Chunk-Dateien, im Speicher)
    Materialstamm "Standardmaterial": standardmaterial.json (klein, im Speicher)
    ============================================================ */
 
@@ -210,10 +210,9 @@ function exportiereCustomStandardMaterial() {
    Nutzt die lokal eingebundene Bibliothek html5-qrcode (vendor/), die auch
    in mobilem Safari/iOS ohne native Barcode-Detection-API funktioniert.
    Scannt verschiedenste Formate (Code128, EAN-13/8, QR, ...). Das Ergebnis
-   wird zunächst als exakte Artikelnummer im DATANORM-Katalog gesucht;
-   Hinweis: der aktuelle Sonepar-Katalog enthält keine Hersteller-EAN,
-   sondern nur die interne Artikelnummer – ein Scan eines Herstellerbarcodes
-   von der Verpackung wird also i. d. R. keinen Treffer liefern. */
+   wird zuerst als Hersteller-EAN gesucht (Feld "g" im Katalog, stammt aus
+   den B-Sätzen der Sonepar-DATANORM, ca. 92 % der Artikel haben eine),
+   dann als exakte Artikelnummer, sonst als normale Textsuche. */
 
 let html5QrcodeScanner = null;
 let barcodeScanErgebnisCallback = null;
@@ -363,7 +362,7 @@ function neuePackliste() {
   };
 }
 
-/* ---------- Materialstamm "Aus Liste" (DATANORM, via IndexedDB) ----------
+/* ---------- Materialstamm "Aus Liste" (DATANORM, Chunk-Dateien) ----------
    Der DATANORM-Vollsortiments-Katalog hat über eine Million Artikel
    (>100 MB als JSON) – zu groß für eine einzelne Datei (GitHub-Limit 100 MB
    pro Datei). Er liegt daher in mehreren Chunk-Dateien
@@ -413,13 +412,45 @@ async function ladeMaterialDB() {
   }
 }
 
+/* EAN-Suche: linearer Durchlauf über den Katalog (wie die Textsuche, < 100 ms).
+   Bewusst kein Extra-Index (Map mit >1 Mio. Einträgen), um den Speicher auf
+   dem iPhone zu schonen – gescannt wird ja nur gelegentlich.
+   Varianten: UPC-A (12-stellig) entspricht EAN-13 mit führender 0; manche
+   Scanner liefern das eine, der Katalog enthält evtl. das andere. */
+function eanVarianten(code) {
+  const c = (code || "").trim();
+  if (!/^\d{8,14}$/.test(c)) return [];
+  const v = new Set([c]);
+  if (c.length === 12) v.add("0" + c);
+  if (c.length === 13 && c[0] === "0") v.add(c.slice(1));
+  if (c.length === 14 && c[0] === "0") v.add(c.slice(1));
+  if (c.length === 13) v.add("0" + c); // GTIN-14 mit führender 0
+  return [...v];
+}
+
+function sucheNachEan(code, limit = 30) {
+  const varianten = eanVarianten(code);
+  if (varianten.length === 0) return [];
+  const treffer = [];
+  for (let i = 0; i < materialDB.length; i++) {
+    const g = materialDB[i].g;
+    if (g && varianten.includes(g)) {
+      treffer.push(materialDB[i]);
+      if (treffer.length >= limit) break;
+    }
+  }
+  return treffer;
+}
+
 function sucheMaterial(query, limit = 30) {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const worte = q.split(/\s+/).filter(Boolean);
-  const treffer = [];
+  // Eingetippte/gescannte EAN (8-14 Ziffern) findet auch den Artikel dazu
+  const treffer = worte.length === 1 ? sucheNachEan(worte[0], limit) : [];
   for (let i = 0; i < materialDB.length; i++) {
     const item = materialDB[i];
+    if (treffer.length && treffer.includes(item)) continue;
     let ok = true;
     for (const w of worte) {
       if (!item._s.includes(w)) { ok = false; break; }
@@ -733,7 +764,24 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     }
   });
 
-  function zeigeSucheErgebnisse(q) {
+  function artikelInfo(item) {
+    return `Art.-Nr. ${escapeHtml(item.n)}${item.g ? " · EAN " + escapeHtml(item.g) : ""} · ${escapeHtml(item.e)}`;
+  }
+
+  function waehleArtikel(item) {
+    selectedArtikel = item;
+    sucheInput.value = item.b;
+    ergebnisListe.hidden = true;
+    einheitListe.value = item.e;
+    ausgewaehlt.hidden = false;
+    ausgewaehlt.innerHTML = `<strong>${escapeHtml(item.b)}</strong><span class="muted">${artikelInfo(item)}</span>`;
+    btnZuStandardOeffnen.hidden = false;
+    standardUebernahmeForm.hidden = true;
+    mengeListe.focus();
+    aktualisiereAddListeButton();
+  }
+
+  function zeigeSucheErgebnisse(q, vorgegebeneTreffer) {
     if (!materialDBReady) {
       ergebnisListe.innerHTML = materialDBFehler
         ? `<li class="no-result">${escapeHtml(materialDBFehler)}</li>`
@@ -741,11 +789,11 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
       ergebnisListe.hidden = false;
       return;
     }
-    if (q.trim().length < 2) {
+    if (!vorgegebeneTreffer && q.trim().length < 2) {
       ergebnisListe.hidden = true;
       return;
     }
-    const treffer = sucheMaterial(q);
+    const treffer = vorgegebeneTreffer || sucheMaterial(q);
     ergebnisListe.innerHTML = "";
     if (treffer.length === 0) {
       ergebnisListe.innerHTML = '<li class="no-result">Keine Treffer – ggf. Freitext verwenden</li>';
@@ -754,19 +802,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     }
     for (const item of treffer) {
       const li = document.createElement("li");
-      li.innerHTML = `${escapeHtml(item.b)}<small>Art.-Nr. ${escapeHtml(item.n)} · ${escapeHtml(item.e)}</small>`;
-      li.addEventListener("click", () => {
-        selectedArtikel = item;
-        sucheInput.value = item.b;
-        ergebnisListe.hidden = true;
-        einheitListe.value = item.e;
-        ausgewaehlt.hidden = false;
-        ausgewaehlt.innerHTML = `<strong>${escapeHtml(item.b)}</strong><span class="muted">Art.-Nr. ${escapeHtml(item.n)} · ${escapeHtml(item.e)}</span>`;
-        btnZuStandardOeffnen.hidden = false;
-        standardUebernahmeForm.hidden = true;
-        mengeListe.focus();
-        aktualisiereAddListeButton();
-      });
+      li.innerHTML = `${escapeHtml(item.b)}<small>${artikelInfo(item)}</small>`;
+      li.addEventListener("click", () => waehleArtikel(item));
       ergebnisListe.appendChild(li);
     }
     ergebnisListe.hidden = false;
@@ -805,22 +842,31 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     sucheInput.focus();
   });
 
-  // Barcode-Scan: Ergebnis erst als exakte Artikelnummer suchen, sonst wie
-  // eine normale Textsuche behandeln (z. B. bei Teil-Übereinstimmungen).
+  // Barcode-Scan: Reihenfolge EAN -> exakte Artikelnummer -> Textsuche.
+  // Genau ein Treffer wird direkt ausgewählt; mehrere Artikel mit derselben
+  // EAN (kommt im Sonepar-Katalog vereinzelt vor) werden zur Auswahl gezeigt.
   btnBarcodeScan.addEventListener("click", () => {
-    oeffneBarcodeScanner((code) => {
+    oeffneBarcodeScanner((rohCode) => {
+      const code = (rohCode || "").trim();
       sucheInput.value = code;
-      const exakt = materialDB.find((item) => item.n === code);
-      if (exakt) {
-        selectedArtikel = exakt;
-        einheitListe.value = exakt.e;
-        ausgewaehlt.hidden = false;
-        ausgewaehlt.innerHTML = `<strong>${escapeHtml(exakt.b)}</strong><span class="muted">Art.-Nr. ${escapeHtml(exakt.n)} · ${escapeHtml(exakt.e)}</span>`;
-        btnZuStandardOeffnen.hidden = false;
-        standardUebernahmeForm.hidden = true;
-        ergebnisListe.hidden = true;
-        mengeListe.focus();
-        aktualisiereAddListeButton();
+      selectedArtikel = null;
+      ausgewaehlt.hidden = true;
+      btnZuStandardOeffnen.hidden = true;
+      standardUebernahmeForm.hidden = true;
+      aktualisiereAddListeButton();
+      if (!materialDBReady) {
+        zeigeSucheErgebnisse(code);
+        return;
+      }
+      let treffer = sucheNachEan(code);
+      if (treffer.length === 0) {
+        const exakt = materialDB.find((item) => item.n === code);
+        if (exakt) treffer = [exakt];
+      }
+      if (treffer.length === 1) {
+        waehleArtikel(treffer[0]);
+      } else if (treffer.length > 1) {
+        zeigeSucheErgebnisse(code, treffer);
       } else {
         zeigeSucheErgebnisse(code);
       }

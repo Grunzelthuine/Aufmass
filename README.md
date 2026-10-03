@@ -9,7 +9,7 @@ DATANORM-Artikelliste oder frei eingetragen), Export als PDF.
 - Kundendaten, Ansprechpartner, Adresse, Baustelle/Bauvorhaben, Datum, Arbeitsbeschreibung
 - Material aus drei Quellen:
   - **Aus Liste**: Volltextsuche über den Materialstamm aus Ihrer DATANORM-Datei
-    (`materials-chunks/`, aktuell ca. 1,24 Mio. Artikel mit Artikelnummer,
+    (`materials-chunks/`, aktuell ca. 1,24 Mio. Artikel mit Artikelnummer, EAN,
     Bezeichnung und Einheit – bewusst **ohne Preise**)
   - **Standardmaterial**: nach Kategorie durchsuchbare, kuratierte Liste
     typischer Elektro-Standardartikel (`standardmaterial.json`, aktuell 194
@@ -49,13 +49,11 @@ DATANORM-Artikelliste oder frei eingetragen), Export als PDF.
 - **Barcode-Scanner** (Kamera-Symbol neben dem Suchfeld in „Aus Liste“):
   öffnet die Gerätekamera und liest Barcodes (Code128, EAN, QR u. a.) über
   die lokal eingebundene Bibliothek `html5-qrcode`. Der gelesene Code wird
-  zunächst als exakte Artikelnummer im DATANORM-Katalog gesucht; ohne Treffer
-  läuft er als normale Textsuche weiter. **Wichtig:** der aktuelle
-  Sonepar-Katalog enthält nur die interne Artikelnummer, keine
-  Hersteller-EAN – ein Barcode von der Originalverpackung liefert daher meist
-  keinen Treffer. Funktioniert zuverlässig mit Barcodes, die die
-  Artikelnummer selbst codieren (z. B. auf Sonepar-eigenen Etiketten/
-  Lieferscheinen, sofern vorhanden) oder mit selbst erzeugten Codes.
+  zuerst als Hersteller-EAN gesucht (ca. 92 % der Sonepar-Artikel haben eine,
+  aus den B-Sätzen der DATANORM-Datei), dann als exakte Artikelnummer, sonst
+  als normale Textsuche. Damit funktionieren auch Barcodes von
+  Originalverpackungen. Gibt es mehrere Artikel mit derselben EAN, werden sie
+  zur Auswahl angezeigt. Eine EAN kann auch direkt ins Suchfeld getippt werden.
 - **Standardmaterial aus „Aus Liste“ übernehmen**: bei einem ausgewählten
   DATANORM-Artikel erscheint der Link „+ Zu Standardmaterial übernehmen“ –
   Kategorie wählen (oder eine neue eingeben), Bezeichnung/Einheit bei Bedarf
@@ -158,7 +156,7 @@ so wird niemand mitten in der Eingabe überrascht.
   tauchen weder in der App noch im PDF auf.
 - Der komplette Materialstamm "Aus Liste" muss einmalig (bzw. nach jedem
   Update mit neuem Artikelstamm) komplett heruntergeladen werden (aktuell
-  ca. 100 MB) – das sollte möglichst im WLAN passieren. Danach läuft die
+  ca. 125 MB) – das sollte möglichst im WLAN passieren. Danach läuft die
   Suche auch offline auf der Baustelle, ohne dass die App die Daten erneut
   herunterladen muss.
 - iOS/Safari öffnet ein per `doc.save()` erzeugtes PDF ggf. in einem neuen Tab

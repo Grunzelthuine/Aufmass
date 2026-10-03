@@ -1,6 +1,6 @@
 // Service Worker für Material-Aufmaß App
 // Versionsnummer bei jedem Deploy mit Inhaltsänderungen erhöhen, damit Nutzer die neue Version bekommen.
-const CACHE_VERSION = "aufmass-v8";
+const CACHE_VERSION = "aufmass-v9";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -14,7 +14,7 @@ const CORE_ASSETS = [
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
-// Die "Aus Liste"-Materialdaten (materials-chunks/*, insgesamt ca. 100 MB)
+// Die "Aus Liste"-Materialdaten (materials-chunks/*, insgesamt ca. 125 MB)
 // werden bewusst NICHT hier in CORE_ASSETS vorab beim Install geladen –
 // das könnte die Installation auf einer langsamen/instabilen Verbindung
 // zum Scheitern bringen. Stattdessen fragt app.js sie beim Start ganz normal
