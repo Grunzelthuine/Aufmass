@@ -458,3 +458,6 @@ tr.zeile-gepackt .bez-text { text-decoration: line-through; }
 .scanner-manuell-row { display: flex; gap: 6px; margin-top: 4px; }
 .scanner-manuell-row input { flex: 1; min-width: 0; }
 .scanner-manuell-row .btn { padding: 10px 14px; white-space: nowrap; }
+
+/* v9.2: Eintrag "Code als eigenen Artikel anlegen" in der Trefferliste */
+.suggest-list .ean-neu-eintrag { color: var(--color-primary); font-weight: 600; }

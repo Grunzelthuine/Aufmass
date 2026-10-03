@@ -1,6 +1,11 @@
 // Service Worker für Material-Aufmaß App
 // Versionsnummer bei jedem Deploy mit Inhaltsänderungen erhöhen, damit Nutzer die neue Version bekommen.
-const CACHE_VERSION = "aufmass-v9";
+const CACHE_VERSION = "aufmass-v9-2";
+// Eigener Cache für den großen DATANORM-Katalog (~125 MB). Wird bei
+// App-Updates NICHT gelöscht, damit nicht bei jeder neuen App-Version der
+// komplette Katalog erneut heruntergeladen werden muss. Die Chunk-URLs
+// enthalten ?v=<Katalog-Version>; app.js räumt alte Versionen selbst auf.
+const KATALOG_CACHE = "aufmass-katalog";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -14,7 +19,7 @@ const CORE_ASSETS = [
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
-// Die "Aus Liste"-Materialdaten (materials-chunks/*, insgesamt ca. 125 MB)
+// Die "Aus Liste"-Materialdaten (materials-chunks/*, insgesamt ca. 125 MB, eigener Cache s. o.)
 // werden bewusst NICHT hier in CORE_ASSETS vorab beim Install geladen –
 // das könnte die Installation auf einer langsamen/instabilen Verbindung
 // zum Scheitern bringen. Stattdessen fragt app.js sie beim Start ganz normal
@@ -35,7 +40,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k !== CACHE_VERSION && k !== KATALOG_CACHE).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
@@ -50,6 +55,43 @@ self.addEventListener("message", (event) => {
 // Cache-first, damit die App auf der Baustelle auch ohne Netz zuverlässig läuft.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+
+  // Katalog-Chunks: Cache-first im eigenen Katalog-Cache
+  if (url.pathname.includes("/materials-chunks/materials-chunk-")) {
+    event.respondWith(
+      caches.open(KATALOG_CACHE).then((cache) =>
+        cache.match(event.request).then((cached) => {
+          if (cached) return cached;
+          return fetch(event.request).then((response) => {
+            if (response && response.status === 200) {
+              cache.put(event.request, response.clone()).catch(() => {});
+            }
+            return response;
+          });
+        })
+      )
+    );
+    return;
+  }
+
+  // Katalog-Manifest: Netzwerk zuerst (klein), damit ein neuer Katalog erkannt
+  // wird; offline aus dem Cache.
+  if (url.pathname.endsWith("/materials-chunks/materials-manifest.json")) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_VERSION).then((cache) => cache.put(url.pathname, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(url.pathname))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

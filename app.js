@@ -11,6 +11,7 @@ const STORAGE_KEY = "aufmass_v1_liste";
 const STORAGE_KEY_PACKLISTEN = "aufmass_v1_packlisten";
 const STORAGE_KEY_FAVORITEN = "aufmass_v1_favoriten";
 const STORAGE_KEY_STANDARD_ERGAENZUNGEN = "aufmass_v1_standard_ergaenzungen";
+const STORAGE_KEY_EIGENE_ARTIKEL = "aufmass_v1_eigene_artikel"; // selbst angelegte EAN-Artikel (v9.2)
 const app = document.getElementById("app");
 const headerTitle = document.getElementById("headerTitle");
 const btnBack = document.getElementById("btnBack");
@@ -384,32 +385,142 @@ function neuePackliste() {
 let materialDB = [];        // Materialstamm "Aus Liste", aus den Chunk-Dateien zusammengesetzt
 let materialDBReady = false;
 let materialDBFehler = null;
+let materialDBStatus = "Materialliste wird geladen…";
+let materialDBLaedt = false;
+const materialDBListener = new Set(); // UI-Callbacks, die bei Fortschritt/Fertig neu zeichnen
 
+function meldeMaterialDBStatus() {
+  materialDBListener.forEach((fn) => {
+    try { fn(); } catch (e) { console.error(e); }
+  });
+}
+
+/* v9.1: speicherschonender und mit Fortschrittsanzeige.
+   - max. 3 Chunks gleichzeitig laden (statt alle 9 parallel)
+   - Suchstring _s direkt am Objekt ergänzen statt jedes der 1,24 Mio.
+     Objekte per {...a} zu kopieren (hat den Speicherbedarf verdoppelt –
+     auf dem iPhone kritisch)
+   - Chunk-URLs mit ?v=<Katalog-Version>, damit der Service Worker den
+     Katalog in einem eigenen Cache halten kann, der App-Updates überlebt
+   - nach Fehler automatischer neuer Versuch, sobald wieder online */
 async function ladeMaterialDB() {
+  if (materialDBLaedt || materialDBReady) return;
+  materialDBLaedt = true;
+  materialDBFehler = null;
   try {
-    const manifestRes = await fetch("materials-chunks/materials-manifest.json");
+    const manifestRes = await fetch("materials-chunks/materials-manifest.json", { cache: "no-cache" })
+      .catch(() => fetch("materials-chunks/materials-manifest.json"));
     if (!manifestRes.ok) throw new Error("Manifest: HTTP " + manifestRes.status);
     const manifest = await manifestRes.json();
+    const anzahl = manifest.chunks.length;
+    const teile = new Array(anzahl);
+    let fertig = 0;
+    materialDBStatus = `Materialliste wird geladen… (0 von ${anzahl})`;
+    meldeMaterialDBStatus();
 
-    const teile = await Promise.all(
-      manifest.chunks.map(async (chunkDatei) => {
-        const res = await fetch(`materials-chunks/${chunkDatei}`);
-        if (!res.ok) throw new Error(`${chunkDatei}: HTTP ${res.status}`);
-        return res.json();
-      })
-    );
+    let naechster = 0;
+    async function arbeiter() {
+      while (naechster < anzahl) {
+        const idx = naechster++;
+        const datei = manifest.chunks[idx];
+        const res = await fetch(`materials-chunks/${datei}?v=${encodeURIComponent(manifest.version || "")}`);
+        if (!res.ok) throw new Error(`${datei}: HTTP ${res.status}`);
+        const arr = await res.json();
+        for (let i = 0; i < arr.length; i++) {
+          const a = arr[i];
+          a._s = (a.n + " " + a.b).toLowerCase();
+        }
+        teile[idx] = arr;
+        fertig++;
+        materialDBStatus = `Materialliste wird geladen… (${fertig} von ${anzahl})`;
+        meldeMaterialDBStatus();
+      }
+    }
+    await Promise.all([arbeiter(), arbeiter(), arbeiter()]);
 
-    const alle = [].concat(...teile);
-    // Suchstring vorab in Kleinbuchstaben cachen für schnelle Filterung
-    materialDB = alle.map((a) => ({ ...a, _s: (a.n + " " + a.b).toLowerCase() }));
+    const alle = [];
+    for (let t = 0; t < teile.length; t++) {
+      const arr = teile[t];
+      for (let i = 0; i < arr.length; i++) alle.push(arr[i]);
+      teile[t] = null;
+    }
+    materialDB = alle;
     materialDBReady = true;
     materialDBFehler = null;
+    raeumeAltenKatalogCacheAuf(manifest.version);
   } catch (e) {
     console.error("Materialstamm konnte nicht geladen werden", e);
     materialDB = [];
     materialDBReady = false;
-    materialDBFehler = "Materialliste konnte nicht geladen werden (bitte online erneut versuchen)";
+    materialDBFehler = "Materialliste konnte nicht geladen werden (wird automatisch erneut versucht, sobald online)";
+  } finally {
+    materialDBLaedt = false;
+    meldeMaterialDBStatus();
   }
+}
+
+// Alte Katalog-Versionen aus dem Katalog-Cache entfernen (nur nach Erfolg).
+async function raeumeAltenKatalogCacheAuf(version) {
+  try {
+    if (!("caches" in window) || !version) return;
+    const cache = await caches.open("aufmass-katalog");
+    const keys = await cache.keys();
+    const v = "v=" + encodeURIComponent(version);
+    await Promise.all(keys.filter((k) => !k.url.includes(v)).map((k) => cache.delete(k)));
+  } catch (e) { /* unkritisch */ }
+}
+
+window.addEventListener("online", () => { if (!materialDBReady) ladeMaterialDB(); });
+
+/* ---------- Eigene Artikel (unbekannte EAN, v9.2) ----------
+   Wird ein Code gescannt/eingegeben, den der Katalog nicht kennt, kann man
+   eine Produktbeschreibung + Einheit eingeben. Der Artikel wird lokal
+   gespeichert (EAN dient als Artikelnummer) und ist ab dann über Scan,
+   Suche und Favoriten wie ein Katalogartikel auffindbar. Rein geräte-lokal. */
+let eigeneArtikel = [];
+
+function mitSuchstring(a) {
+  a._s = (a.n + " " + a.b).toLowerCase();
+  a._eigen = true;
+  return a;
+}
+
+function ladeEigeneArtikel() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_EIGENE_ARTIKEL);
+    eigeneArtikel = (raw ? JSON.parse(raw) : []).map(mitSuchstring);
+  } catch (e) {
+    console.error("Eigene Artikel konnten nicht geladen werden", e);
+    eigeneArtikel = [];
+  }
+}
+
+function speichereEigeneArtikel() {
+  try {
+    const daten = eigeneArtikel.map((a) => ({ n: a.n, b: a.b, e: a.e, g: a.g, angelegt: a.angelegt }));
+    localStorage.setItem(STORAGE_KEY_EIGENE_ARTIKEL, JSON.stringify(daten));
+  } catch (e) {
+    console.error("Eigene Artikel konnten nicht gespeichert werden", e);
+  }
+}
+
+function legeEigenenArtikelAn(code, bezeichnung, einheit) {
+  const vorhanden = eigeneArtikel.find((a) => a.g === code);
+  if (vorhanden) {
+    vorhanden.b = bezeichnung;
+    vorhanden.e = einheit;
+    mitSuchstring(vorhanden);
+    speichereEigeneArtikel();
+    return vorhanden;
+  }
+  const neu = mitSuchstring({ n: code, b: bezeichnung, e: einheit, g: code, angelegt: new Date().toISOString() });
+  eigeneArtikel.unshift(neu);
+  speichereEigeneArtikel();
+  return neu;
+}
+
+function istEanAehnlich(code) {
+  return /^\d{8,14}$/.test((code || "").trim());
 }
 
 /* EAN-Suche: linearer Durchlauf über den Katalog (wie die Textsuche, < 100 ms).
@@ -431,7 +542,8 @@ function eanVarianten(code) {
 function sucheNachEan(code, limit = 30) {
   const varianten = eanVarianten(code);
   if (varianten.length === 0) return [];
-  const treffer = [];
+  const treffer = eigeneArtikel.filter((a) => varianten.includes(a.g) || varianten.includes(a.n));
+  if (treffer.length >= limit) return treffer.slice(0, limit);
   for (let i = 0; i < materialDB.length; i++) {
     const g = materialDB[i].g;
     if (g && varianten.includes(g)) {
@@ -448,6 +560,10 @@ function sucheMaterial(query, limit = 30) {
   const worte = q.split(/\s+/).filter(Boolean);
   // Eingetippte/gescannte EAN (8-14 Ziffern) findet auch den Artikel dazu
   const treffer = worte.length === 1 ? sucheNachEan(worte[0], limit) : [];
+  for (const item of eigeneArtikel) {
+    if (treffer.includes(item)) continue;
+    if (worte.every((w) => item._s.includes(w))) treffer.push(item);
+  }
   for (let i = 0; i < materialDB.length; i++) {
     const item = materialDB[i];
     if (treffer.length && treffer.includes(item)) continue;
@@ -735,6 +851,45 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
   const btnAddListe = document.getElementById("btnAddListe");
   const btnBarcodeScan = document.getElementById("btnBarcodeScan");
   const btnZuStandardOeffnen = document.getElementById("btnZuStandardOeffnen");
+  const eanNeuForm = document.getElementById("eanNeuForm");
+  const eanNeuHinweis = document.getElementById("en_hinweis");
+  const enBezeichnung = document.getElementById("en_bezeichnung");
+  const enEinheit = document.getElementById("en_einheit");
+  const enAnlegen = document.getElementById("en_anlegen");
+  const enAbbrechen = document.getElementById("en_abbrechen");
+  let eanNeuCode = "";
+
+  function oeffneEanNeuForm(code) {
+    eanNeuCode = code;
+    eanNeuHinweis.innerHTML = `Code <strong>${escapeHtml(code)}</strong> ist nicht im Katalog. Produktbeschreibung eingeben – der Artikel wird gemerkt und beim nächsten Scan direkt erkannt.`;
+    enBezeichnung.value = "";
+    enEinheit.value = enEinheit.value || "Stck";
+    ergebnisListe.hidden = true;
+    ausgewaehlt.hidden = true;
+    btnZuStandardOeffnen.hidden = true;
+    standardUebernahmeForm.hidden = true;
+    eanNeuForm.hidden = false;
+    aktualisiereEanNeuButton();
+    enBezeichnung.focus();
+  }
+  function schliesseEanNeuForm() {
+    eanNeuForm.hidden = true;
+    eanNeuCode = "";
+  }
+  function aktualisiereEanNeuButton() {
+    enAnlegen.disabled = !enBezeichnung.value.trim() || !enEinheit.value.trim();
+  }
+  enBezeichnung.addEventListener("input", aktualisiereEanNeuButton);
+  enEinheit.addEventListener("input", aktualisiereEanNeuButton);
+  enAbbrechen.addEventListener("click", schliesseEanNeuForm);
+  enAnlegen.addEventListener("click", () => {
+    const b = enBezeichnung.value.trim();
+    const e = enEinheit.value.trim();
+    if (!eanNeuCode || !b || !e) return;
+    const item = legeEigenenArtikelAn(eanNeuCode, b, e);
+    schliesseEanNeuForm();
+    waehleArtikel(item); // danach nur noch Menge eingeben + "Hinzufügen"
+  });
   const standardUebernahmeForm = document.getElementById("standardUebernahmeForm");
   const suKategorie = document.getElementById("su_kategorie");
   const suKategorieNeuWrap = document.getElementById("su_kategorieNeuWrap");
@@ -753,8 +908,21 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     standardUebernahmeForm.hidden = true;
     aktualisiereAddListeButton();
     const q = sucheInput.value;
+    if (!eanNeuForm.hidden && q.trim() !== eanNeuCode) schliesseEanNeuForm();
     sucheTimer = setTimeout(() => zeigeSucheErgebnisse(q), 120);
   });
+  // Sobald der Katalog fertig ist (oder Fortschritt meldet), die Anzeige
+  // aktualisieren – vorher blieb "wird geladen…" stehen, bis man neu tippte.
+  const katalogListener = () => {
+    if (!document.body.contains(sucheInput)) {
+      materialDBListener.delete(katalogListener);
+      return;
+    }
+    if (!ergebnisListe.hidden || document.activeElement === sucheInput) {
+      zeigeSucheErgebnisse(sucheInput.value);
+    }
+  };
+  materialDBListener.add(katalogListener);
   sucheInput.addEventListener("focus", () => {
     if (sucheInput.value.trim()) zeigeSucheErgebnisse(sucheInput.value);
   });
@@ -765,10 +933,12 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
   });
 
   function artikelInfo(item) {
+    if (item._eigen) return `EAN ${escapeHtml(item.g)} · ${escapeHtml(item.e)} · eigener Artikel`;
     return `Art.-Nr. ${escapeHtml(item.n)}${item.g ? " · EAN " + escapeHtml(item.g) : ""} · ${escapeHtml(item.e)}`;
   }
 
   function waehleArtikel(item) {
+    eanNeuForm.hidden = true;
     selectedArtikel = item;
     sucheInput.value = item.b;
     ergebnisListe.hidden = true;
@@ -785,7 +955,7 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     if (!materialDBReady) {
       ergebnisListe.innerHTML = materialDBFehler
         ? `<li class="no-result">${escapeHtml(materialDBFehler)}</li>`
-        : '<li class="no-result">Materialliste wird geladen…</li>';
+        : `<li class="no-result">${escapeHtml(materialDBStatus)}</li>`;
       ergebnisListe.hidden = false;
       return;
     }
@@ -797,6 +967,13 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     ergebnisListe.innerHTML = "";
     if (treffer.length === 0) {
       ergebnisListe.innerHTML = '<li class="no-result">Keine Treffer – ggf. Freitext verwenden</li>';
+      if (istEanAehnlich(q)) {
+        const li = document.createElement("li");
+        li.className = "ean-neu-eintrag";
+        li.innerHTML = `＋ Code ${escapeHtml(q.trim())} als eigenen Artikel anlegen`;
+        li.addEventListener("click", () => oeffneEanNeuForm(q.trim()));
+        ergebnisListe.appendChild(li);
+      }
       ergebnisListe.hidden = false;
       return;
     }
@@ -854,8 +1031,12 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
       btnZuStandardOeffnen.hidden = true;
       standardUebernahmeForm.hidden = true;
       aktualisiereAddListeButton();
+      schliesseEanNeuForm();
       if (!materialDBReady) {
-        zeigeSucheErgebnisse(code);
+        // Eigene Artikel sind auch ohne geladenen Katalog bekannt
+        const eigene = sucheNachEan(code);
+        if (eigene.length === 1) waehleArtikel(eigene[0]);
+        else zeigeSucheErgebnisse(code);
         return;
       }
       let treffer = sucheNachEan(code);
@@ -867,6 +1048,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
         waehleArtikel(treffer[0]);
       } else if (treffer.length > 1) {
         zeigeSucheErgebnisse(code, treffer);
+      } else if (istEanAehnlich(code) && !sucheMaterial(code).length) {
+        oeffneEanNeuForm(code); // unbekannter EAN -> direkt Beschreibung erfassen
       } else {
         zeigeSucheErgebnisse(code);
       }
@@ -1414,6 +1597,7 @@ ladeListe();
 ladePacklisten();
 ladeFavoriten();
 ladeCustomStandardMaterial();
+ladeEigeneArtikel();
 ladeMaterialDB();
 ladeStandardMaterialDB();
 zeigeUebersicht();

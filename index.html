@@ -172,6 +172,25 @@
       <ul id="sucheErgebnisse" class="suggest-list" hidden></ul>
     </div>
     <div id="ausgewaehlterArtikel" class="selected-article" hidden></div>
+    <div id="eanNeuForm" class="selected-article" hidden>
+      <p class="hint" id="en_hinweis" style="margin-top:0"></p>
+      <div class="field-grid">
+        <label>Produktbeschreibung
+          <input type="text" id="en_bezeichnung" placeholder="z. B. Abzweigdose AP 80x80 grau" autocomplete="off">
+        </label>
+        <label>Einheit
+          <input type="text" id="en_einheit" value="Stck" list="en_einheiten" autocomplete="off">
+        </label>
+      </div>
+      <datalist id="en_einheiten">
+        <option value="Stck"></option><option value="m"></option><option value="Pack"></option>
+        <option value="Rolle"></option><option value="Satz"></option><option value="kg"></option>
+      </datalist>
+      <div class="action-bar" style="margin-top:8px">
+        <button type="button" class="btn btn-secondary" id="en_anlegen" disabled>Artikel anlegen</button>
+        <button type="button" class="btn-danger-text" id="en_abbrechen">Abbrechen</button>
+      </div>
+    </div>
     <button type="button" class="btn-link-accent" id="btnZuStandardOeffnen" hidden>+ Zu Standardmaterial übernehmen</button>
     <div id="standardUebernahmeForm" class="selected-article" hidden>
       <label>Kategorie
