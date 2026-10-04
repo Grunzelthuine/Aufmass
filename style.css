@@ -461,3 +461,95 @@ tr.zeile-gepackt .bez-text { text-decoration: line-through; }
 
 /* v9.2: Eintrag "Code als eigenen Artikel anlegen" in der Trefferliste */
 .suggest-list .ean-neu-eintrag { color: var(--color-primary); font-weight: 600; }
+
+/* ---------- v10: Bauaufmaß ---------- */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.chip {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  cursor: pointer;
+}
+.chip:active { background: #eef1f6; }
+.chip:disabled { opacity: 0.4; cursor: default; }
+.chip.chip-benutzt { background: #eef4ff; border-color: #cfe0ff; }
+.chip.chip-benutzt::after { content: " ✓"; color: var(--color-text-muted); }
+.chip-schaltung { border-radius: 8px; }
+.kategorie-titel-klein {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-top: 8px;
+}
+.inline-add { display: flex; gap: 6px; }
+.inline-add input { flex: 1; min-width: 0; }
+.inline-add .btn { padding: 10px 14px; white-space: nowrap; }
+
+.etagen-liste { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+.etage-karte {
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-accent);
+  border-radius: 10px;
+  padding: 10px 10px 8px;
+  background: #fafbfd;
+}
+.etage-kopf { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.etage-name { font-size: 1rem; }
+.etage-aktionen { display: flex; gap: 4px; }
+.btn-mini {
+  width: 30px; height: 30px; min-width: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-primary);
+  font-size: 0.9rem;
+  display: flex; align-items: center; justify-content: center;
+}
+.btn-mini:disabled { opacity: 0.35; }
+.btn-mini-danger { color: var(--color-danger); }
+.raum-liste { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.raum-leer { padding: 2px 0; }
+.raum-karte {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  cursor: pointer;
+}
+.raum-karte:active { background: #f2f5f9; }
+.raum-karte .info { flex: 1; min-width: 0; }
+.raum-karte .kunde { font-weight: 600; margin: 0 0 2px; font-size: 0.95rem; }
+.raum-karte .meta { color: var(--color-text-muted); font-size: 0.8rem; margin: 0; }
+.raum-karte .chevron { color: var(--color-text-muted); }
+.raum-add-panel { padding-top: 2px; }
+
+.raum-kopf-karte { padding-top: 12px; }
+.zaehler-zeile {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid #eef1f5;
+}
+.zaehler-zeile:last-child { border-bottom: none; }
+.zaehler-label { font-size: 0.92rem; color: var(--color-text-muted); }
+.zaehler-zeile.aktiv .zaehler-label { color: var(--color-text); font-weight: 600; }
+.zaehler-zeile .menge-control input { width: 48px; }
+.zaehler-zeile .btn-qty { width: 34px; height: 34px; min-width: 34px; font-size: 1.15rem; }
+
+.schaltungen-liste { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.schaltung-karte {
+  border: 1px solid #cfe0ff;
+  background: #f5f9ff;
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+}
+.schaltung-kopf { display: flex; justify-content: space-between; align-items: center; }
+.schaltung-kopf strong { font-size: 0.92rem; }
+.zaehler-schaltstellen { border-bottom: 1px dashed #cfe0ff; }
+.schaltung-bemerkung { margin-top: 6px; font-size: 0.88rem; padding: 7px 10px; }
+.raum-aktionen { justify-content: space-between; }

@@ -36,6 +36,7 @@ let selectedFavoritArtikel = null;  // aktuell gewähltes Material (Tab "Favorit
 let favoritenCounts = {};           // Nutzungszähler für die selbstlernende Favoriten-Funktion
 let customStandardMaterial = [];    // vom Nutzer aus "Aus Liste" übernommene Standardmaterial-Ergänzungen
 let saveTimer = null;
+let zurueckAktion = null;           // Ziel des Zurück-Buttons (null = Übersicht), z. B. Raum -> Bauaufmaß
 
 /* ---------- Storage ---------- */
 
@@ -308,6 +309,7 @@ function autosave() {
     if (currentPackliste && !istLeerePackliste(currentPackliste)) {
       upsertCurrentPackliste();
     }
+    if (typeof autosaveBauaufmass === "function") autosaveBauaufmass();
   }, 300);
 }
 
@@ -596,8 +598,16 @@ async function ladeStandardMaterialDB() {
 /* ---------- Navigation / Rendering ---------- */
 
 function zeigeUebersicht() {
+  // Ausstehenden Autosave sofort ausführen, bevor die Referenzen verworfen werden
+  clearTimeout(saveTimer);
+  if (currentAufmass && !istLeeresAufmass(currentAufmass)) upsertCurrentInListe();
+  if (currentPackliste && !istLeerePackliste(currentPackliste)) upsertCurrentPackliste();
+  if (typeof autosaveBauaufmass === "function") autosaveBauaufmass();
   currentAufmass = null;
   currentPackliste = null;
+  currentBauaufmass = null;
+  currentRaum = null;
+  zurueckAktion = null;
   selectedArtikel = null;
   selectedStandardArtikel = null;
   selectedFavoritArtikel = null;
@@ -636,6 +646,8 @@ function zeigeUebersicht() {
       listeEl.appendChild(li);
     }
   }
+
+  renderBauaufmassUebersicht();
 
   document.getElementById("btnNewPackliste").addEventListener("click", () => oeffnePackliste(neuePackliste()));
 
@@ -676,6 +688,9 @@ function escapeHtml(str) {
 function oeffneFormular(aufmass) {
   currentAufmass = aufmass;
   currentPackliste = null;
+  currentBauaufmass = null;
+  currentRaum = null;
+  zurueckAktion = null;
   selectedArtikel = null;
   selectedStandardArtikel = null;
   selectedFavoritArtikel = null;
@@ -1364,6 +1379,9 @@ function renderMaterialTabelle() {
 function oeffnePackliste(packliste) {
   currentPackliste = packliste;
   currentAufmass = null;
+  currentBauaufmass = null;
+  currentRaum = null;
+  zurueckAktion = null;
   selectedArtikel = null;
   selectedStandardArtikel = null;
   selectedFavoritArtikel = null;
@@ -1590,11 +1608,12 @@ function erstellePdf(a) {
 
 /* ---------- Init ---------- */
 
-btnBack.addEventListener("click", zeigeUebersicht);
+btnBack.addEventListener("click", () => (zurueckAktion ? zurueckAktion() : zeigeUebersicht()));
 btnNew.addEventListener("click", () => oeffneFormular(neuesAufmass()));
 
 ladeListe();
 ladePacklisten();
+ladeBauaufmasse();
 ladeFavoriten();
 ladeCustomStandardMaterial();
 ladeEigeneArtikel();
