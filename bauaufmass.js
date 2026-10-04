@@ -33,7 +33,6 @@ const BAU_POSITIONEN_GRUPPEN = [
     { key: "cat1", b: "Cat 1-fach" },
     { key: "cat2", b: "Cat 2-fach" },
     { key: "sat", b: "Sat-Anschluss" },
-    { key: "rollo", b: "Rollo" },
     { key: "fbh", b: "FBH Thermostat" }
   ] },
   { id: "melder", titel: "Melder", positionen: [
@@ -68,6 +67,13 @@ const BAU_SCHALTUNGSTYPEN = [
   { key: "kreuz", b: "Kreuzschaltung", min: 3 }
 ];
 
+// Rollos (v10.1): je Rollo-Anschluss Bedienung wählbar
+const BAU_ROLLO_BEDIENUNG = [
+  { key: "keine", b: "Keine", label: "ohne Schalter/Taster" },
+  { key: "schalter", b: "Schalter", label: "Schalter", mat: "Rolloschalter" },
+  { key: "taster", b: "Taster", label: "Taster", mat: "Rollotaster" }
+];
+
 const BAU_AUSLAESSE = [
   { key: "wand", b: "Wandauslass" },
   { key: "decke", b: "Deckenauslass" },
@@ -86,6 +92,7 @@ function ladeBauaufmasse() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_BAUAUFMASSE);
     bauaufmasse = raw ? JSON.parse(raw) : [];
+    bauaufmasse.forEach((b) => b.etagen.forEach((e) => e.raeume.forEach(migriereRaum)));
   } catch (e) {
     console.error("Fehler beim Laden der Bauaufmaße", e);
     bauaufmasse = [];
@@ -138,7 +145,23 @@ function neuesBauaufmass() {
 }
 
 function neuerRaum(name) {
-  return { id: neueId(), name, positionen: {}, schaltungen: [], material: [] };
+  return { id: neueId(), name, positionen: {}, schaltungen: [], rollos: [], material: [] };
+}
+
+function neuesRollo(anzahl = 1, bedienung = "keine") {
+  return { id: neueId(), anzahl, bedienung, bedienAnzahl: 1, bemerkung: "" };
+}
+
+// v10.0 hatte "Rollo" als einfachen Zähler – in Rollo-Einträge ohne Bedienung umwandeln.
+function migriereRaum(raum) {
+  if (!Array.isArray(raum.rollos)) raum.rollos = [];
+  const alt = raum.positionen && raum.positionen.rollo;
+  if (alt > 0) raum.rollos.push(neuesRollo(alt, "keine"));
+  if (raum.positionen) delete raum.positionen.rollo;
+}
+
+function rolloBedienung(key) {
+  return BAU_ROLLO_BEDIENUNG.find((x) => x.key === key) || BAU_ROLLO_BEDIENUNG[0];
 }
 
 function erstelltDatumISO(b) {
@@ -160,6 +183,8 @@ function raumZusammenfassung(raum) {
   const teile = [];
   const nS = raum.schaltungen.length;
   if (nS) teile.push(`${nS} Schaltung${nS === 1 ? "" : "en"}`);
+  const nR = (raum.rollos || []).reduce((s, r) => s + r.anzahl, 0);
+  if (nR) teile.push(`${nR} Rollo${nR === 1 ? "" : "s"}`);
   const nP = Object.values(raum.positionen).reduce((s, v) => s + (v > 0 ? v : 0), 0);
   if (nP) teile.push(`${nP} Anschl./Geräte`);
   const nM = raum.material.filter((m) => m.menge > 0).length;
@@ -462,6 +487,7 @@ function oeffneRaum(etage, raum) {
   selectedArtikel = null;
   selectedStandardArtikel = null;
   selectedFavoritArtikel = null;
+  migriereRaum(raum);
   const b = currentBauaufmass;
   zurueckAktion = () => oeffneBauaufmass(b, bauScrollPosition);
   headerTitle.textContent = `${etage.name} · ${raum.name}`;
@@ -502,6 +528,16 @@ function oeffneRaum(etage, raum) {
     typenEl.appendChild(btn);
   }
 
+  // Rollos
+  renderRollos();
+  document.getElementById("r_rolloHinzufuegen").addEventListener("click", () => {
+    raum.rollos.push(neuesRollo());
+    autosave();
+    renderRollos();
+    const karten = document.querySelectorAll(".rollo-karte");
+    if (karten.length) karten[karten.length - 1].scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+
   // Zähler-Gruppen
   const gruppenEl = document.getElementById("r_gruppen");
   for (const g of BAU_POSITIONEN_GRUPPEN) {
@@ -541,6 +577,7 @@ function oeffneRaum(etage, raum) {
     kopie.id = neueId();
     kopie.name = kopieRaumname(etage, raum.name || "Raum");
     kopie.schaltungen.forEach((s) => (s.id = neueId()));
+    kopie.rollos.forEach((r) => (r.id = neueId()));
     kopie.material.forEach((m) => (m.id = neueId()));
     etage.raeume.splice(etage.raeume.indexOf(raum) + 1, 0, kopie);
     autosave();
@@ -589,6 +626,74 @@ function renderSchaltungen() {
     const bem = karte.querySelector(".schaltung-bemerkung");
     bem.value = s.bemerkung || "";
     bem.addEventListener("input", () => { s.bemerkung = bem.value; autosave(); });
+    liste.appendChild(karte);
+  });
+}
+
+function renderRollos() {
+  const { raum } = currentRaum;
+  const liste = document.getElementById("r_rollos");
+  liste.innerHTML = "";
+  const summe = raum.rollos.reduce((s, r) => s + r.anzahl, 0);
+  document.getElementById("r_anzahlRollos").textContent = summe;
+  document.getElementById("r_rollosLeer").hidden = raum.rollos.length !== 0;
+
+  raum.rollos.forEach((r, i) => {
+    const karte = document.createElement("div");
+    karte.className = "schaltung-karte rollo-karte";
+    karte.innerHTML = `
+      <div class="schaltung-kopf">
+        <strong>${i + 1}. Rollo-Anschluss</strong>
+        <button type="button" class="btn-danger-text" aria-label="Rollo entfernen">✕</button>
+      </div>
+      <div class="rollo-anzahl"></div>
+      <div class="rollo-bedienung-label">Bedienung vor Ort</div>
+      <div class="segment" role="radiogroup"></div>
+      <div class="rollo-bedien-anzahl"></div>
+      <input type="text" class="schaltung-bemerkung" placeholder="Bemerkung (optional, z. B. Terrassentür, Gruppe Süd)">`;
+    karte.querySelector(".btn-danger-text").addEventListener("click", () => {
+      if (!confirm("Rollo-Anschluss entfernen?")) return;
+      raum.rollos = raum.rollos.filter((x) => x.id !== r.id);
+      autosave();
+      renderRollos();
+    });
+    karte.querySelector(".rollo-anzahl").appendChild(baueZaehler("Anzahl Rollos", r.anzahl, 1, (v) => {
+      r.anzahl = v;
+      document.getElementById("r_anzahlRollos").textContent = raum.rollos.reduce((s, x) => s + x.anzahl, 0);
+      autosave();
+    }));
+    const bedienAnzahlEl = karte.querySelector(".rollo-bedien-anzahl");
+    const zeigeBedienAnzahl = () => {
+      bedienAnzahlEl.innerHTML = "";
+      const bd = rolloBedienung(r.bedienung);
+      if (bd.key === "keine") return;
+      bedienAnzahlEl.appendChild(baueZaehler(`Anzahl ${bd.b}`, r.bedienAnzahl || 1, 1, (v) => { r.bedienAnzahl = v; autosave(); }));
+    };
+    const segment = karte.querySelector(".segment");
+    for (const bd of BAU_ROLLO_BEDIENUNG) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "segment-btn" + (r.bedienung === bd.key ? " aktiv" : "");
+      btn.setAttribute("role", "radio");
+      btn.setAttribute("aria-checked", r.bedienung === bd.key ? "true" : "false");
+      btn.textContent = bd.b;
+      btn.addEventListener("click", () => {
+        r.bedienung = bd.key;
+        if (!(r.bedienAnzahl >= 1)) r.bedienAnzahl = 1;
+        segment.querySelectorAll(".segment-btn").forEach((x) => {
+          const an = x === btn;
+          x.classList.toggle("aktiv", an);
+          x.setAttribute("aria-checked", an ? "true" : "false");
+        });
+        zeigeBedienAnzahl();
+        autosave();
+      });
+      segment.appendChild(btn);
+    }
+    zeigeBedienAnzahl();
+    const bem = karte.querySelector(".schaltung-bemerkung");
+    bem.value = r.bemerkung || "";
+    bem.addEventListener("input", () => { r.bemerkung = bem.value; autosave(); });
     liste.appendChild(karte);
   });
 }
@@ -642,6 +747,17 @@ function bauRaumZeilen(raum) {
       }
     });
   }
+  const rollos = (raum.rollos || []).filter((r) => r.anzahl > 0);
+  if (rollos.length) {
+    zeilen.push({ gruppe: "Rollos" });
+    rollos.forEach((r) => {
+      const bd = rolloBedienung(r.bedienung);
+      const bem = (r.bemerkung || "").trim();
+      const zusatz = bd.key === "keine" ? " (ohne Schalter/Taster)" : "";
+      zeilen.push({ b: "Rollo" + zusatz + (bem ? ` – ${bem}` : ""), menge: r.anzahl, e: "Stck", schaltung: true });
+      if (bd.mat && r.bedienAnzahl > 0) zeilen.push({ b: bd.mat, menge: r.bedienAnzahl, e: "Stck", unter: true });
+    });
+  }
   for (const g of BAU_POSITIONEN_GRUPPEN) {
     const pos = g.positionen.filter((p) => raum.positionen[p.key] > 0);
     if (!pos.length) continue;
@@ -660,6 +776,7 @@ function bauGesamtZeilen(b) {
   const schaltungen = new Map();
   const auslaesse = {};
   const positionen = {};
+  const rolloSumme = { rollo: 0, schalter: 0, taster: 0 };
   const material = new Map();
   for (const etage of b.etagen) {
     for (const raum of etage.raeume) {
@@ -667,6 +784,11 @@ function bauGesamtZeilen(b) {
         const key = schaltungBezeichnung(s);
         schaltungen.set(key, (schaltungen.get(key) || 0) + 1);
         for (const a of BAU_AUSLAESSE) if (s[a.key] > 0) auslaesse[a.key] = (auslaesse[a.key] || 0) + s[a.key];
+      }
+      for (const r of raum.rollos || []) {
+        if (!(r.anzahl > 0)) continue;
+        rolloSumme.rollo += r.anzahl;
+        if (r.bedienung === "schalter" || r.bedienung === "taster") rolloSumme[r.bedienung] += r.bedienAnzahl || 0;
       }
       for (const [k, v] of Object.entries(raum.positionen)) if (v > 0) positionen[k] = (positionen[k] || 0) + v;
       for (const m of raum.material) {
@@ -693,6 +815,12 @@ function bauGesamtZeilen(b) {
   if (aus.length) {
     zeilen.push({ gruppe: "Beleuchtung – Auslässe" });
     for (const a of aus) zeilen.push({ b: a.b, menge: auslaesse[a.key], e: "Stck" });
+  }
+  if (rolloSumme.rollo) {
+    zeilen.push({ gruppe: "Rollos" });
+    zeilen.push({ b: "Rollo", menge: rolloSumme.rollo, e: "Stck" });
+    if (rolloSumme.schalter) zeilen.push({ b: "Rolloschalter", menge: rolloSumme.schalter, e: "Stck" });
+    if (rolloSumme.taster) zeilen.push({ b: "Rollotaster", menge: rolloSumme.taster, e: "Stck" });
   }
   for (const g of BAU_POSITIONEN_GRUPPEN) {
     const pos = g.positionen.filter((p) => positionen[p.key] > 0);

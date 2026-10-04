@@ -553,3 +553,19 @@ tr.zeile-gepackt .bez-text { text-decoration: line-through; }
 .zaehler-schaltstellen { border-bottom: 1px dashed #cfe0ff; }
 .schaltung-bemerkung { margin-top: 6px; font-size: 0.88rem; padding: 7px 10px; }
 .raum-aktionen { justify-content: space-between; }
+
+/* v10.1: Rollo-Bedienung (Keine / Schalter / Taster) */
+.rollo-bedienung-label { font-size: 0.82rem; color: var(--color-text-muted); font-weight: 500; margin: 8px 0 4px; }
+.segment { display: flex; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; background: #fff; }
+.segment-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 9px 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+.segment-btn + .segment-btn { border-left: 1px solid var(--color-border); }
+.segment-btn.aktiv { background: var(--color-primary); color: #fff; }
+.rollo-bedien-anzahl:not(:empty) { margin-top: 4px; }
