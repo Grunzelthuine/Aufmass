@@ -597,6 +597,16 @@ async function ladeStandardMaterialDB() {
 
 /* ---------- Navigation / Rendering ---------- */
 
+// Nach dem Löschen aufrufen (vor zeigeUebersicht), damit der Autosave-Flush
+// das gerade gelöschte Element nicht wieder in die Liste schreibt.
+function verwerfeAktuellesOhneSpeichern() {
+  clearTimeout(saveTimer);
+  currentAufmass = null;
+  currentPackliste = null;
+  if (typeof currentBauaufmass !== "undefined") currentBauaufmass = null;
+  if (typeof currentRaum !== "undefined") currentRaum = null;
+}
+
 function zeigeUebersicht() {
   // Ausstehenden Autosave sofort ausführen, bevor die Referenzen verworfen werden
   clearTimeout(saveTimer);
@@ -752,6 +762,7 @@ function bindeFormularEvents() {
     if (!confirm("Dieses Aufmaß wirklich löschen?")) return;
     aufmassListe = aufmassListe.filter((x) => x.id !== a.id);
     speichereListe();
+    verwerfeAktuellesOhneSpeichern();
     zeigeUebersicht();
   });
 
@@ -1428,6 +1439,7 @@ function bindePacklisteEvents() {
     if (!confirm("Diese Packliste wirklich löschen?")) return;
     packlisten = packlisten.filter((x) => x.id !== p.id);
     speicherePacklisten();
+    verwerfeAktuellesOhneSpeichern();
     zeigeUebersicht();
   });
 }

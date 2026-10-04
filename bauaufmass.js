@@ -282,6 +282,7 @@ function oeffneBauaufmass(b, scrollY) {
     if (!confirm("Dieses Bauaufmaß wirklich löschen?")) return;
     bauaufmasse = bauaufmasse.filter((x) => x.id !== b.id);
     speichereBauaufmasse();
+    verwerfeAktuellesOhneSpeichern();
     zeigeUebersicht();
   });
   document.getElementById("btnBauPdf").addEventListener("click", () => {
