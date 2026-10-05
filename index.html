@@ -66,6 +66,7 @@
     </div>
     <p id="bauaufmasseLeer" class="hint" hidden>Noch kein Bauaufmaß angelegt.</p>
     <ul id="bauaufmassListe" class="card-list"></ul>
+    <button type="button" id="btnProduktliste" class="btn-link-accent">⚙ Produktliste</button>
 
     <div class="section-heading-row section-heading-row-spaced">
       <h2>Packlisten</h2>
@@ -365,6 +366,12 @@
     </details>
 
     <details class="section-card" open>
+      <summary>Abdeckung &amp; Rahmen</summary>
+      <div id="b_abdeckung" class="abdeckung-einstellung"></div>
+      <p class="hint">Gilt für Steckdosen, Schalter/Taster, Datendosen, Blindabdeckungen und Rahmen. Abweichungen je Raum oder je Position im Raum möglich.</p>
+    </details>
+
+    <details class="section-card" open>
       <summary>Etagen &amp; Räume</summary>
       <p id="b_etagenLeer" class="hint" hidden>Noch keine Etage – unten eine Etage hinzufügen.</p>
       <div id="b_etagen" class="etagen-liste"></div>
@@ -395,6 +402,7 @@
           <input type="text" id="r_name">
         </label>
       </div>
+      <div id="r_abdeckung"></div>
     </div>
 
     <details class="section-card" open>
@@ -418,7 +426,22 @@
       <div id="r_knxAuswahl"></div>
     </details>
 
+    <details class="section-card" id="r_melderDetails">
+      <summary><span>Melder (<span id="r_anzahlMelder">0</span>)</span></summary>
+      <p id="r_melderLeer" class="hint" hidden>Noch kein Melder.</p>
+      <div id="r_melder" class="schaltungen-liste"></div>
+      <div id="r_melderAuswahl"></div>
+    </details>
+
     <div id="r_gruppen" class="view"></div>
+
+    <details class="section-card" id="r_abwDetails">
+      <summary><span>Abweichende Abdeckung (<span id="r_anzahlAbw">0</span>)</span></summary>
+      <p class="hint">Zusätzlich zu den Zählern oben: Positionen mit anderer Abdeckung als im Raum, z. B. 2 Steckdosen in AP-Feuchtraum.</p>
+      <p id="r_abwLeer" class="hint" hidden>Keine Abweichungen.</p>
+      <div id="r_abw" class="schaltungen-liste"></div>
+      <button type="button" class="chip chip-schaltung" id="r_abwHinzufuegen">+ Position mit anderer Abdeckung</button>
+    </details>
 
     <details class="section-card">
       <summary>Weiteres Material hinzufügen</summary>

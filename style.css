@@ -597,3 +597,18 @@ tr.zeile-gepackt .bez-text { text-decoration: line-through; }
 .melder-typ { margin-top: 2px; margin-bottom: 4px; }
 .komp-aktionen { display: flex; align-items: center; gap: 6px; }
 .komp-kopie { padding: 4px 6px; font-size: 0.8rem; }
+
+/* v12: Produktliste, Abdeckungen */
+.produkt-auswahl { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 6px; }
+.produkt-auswahl select { font-size: 0.92rem; padding: 8px 10px; }
+.produkt-form { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.produkt-form .suche-mit-scan .btn { padding: 8px 10px; white-space: nowrap; }
+.produkt-form .action-bar { margin-top: 2px; }
+.abdeckung-einstellung { display: flex; flex-direction: column; gap: 6px; }
+#r_abdeckung { margin-top: 4px; }
+#btnProduktliste { margin-top: 8px; align-self: flex-start; }
+.pl-eintraege { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pl-eintrag { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid #eef1f5; }
+.pl-eintrag .info { min-width: 0; }
+.pl-eintrag strong { display: block; font-size: 0.92rem; }
+.pl-eintrag small { color: var(--color-text-muted); font-size: 0.78rem; }

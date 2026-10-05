@@ -1626,6 +1626,7 @@ btnNew.addEventListener("click", () => oeffneFormular(neuesAufmass()));
 ladeListe();
 ladePacklisten();
 ladeBauaufmasse();
+ladeProdukte();
 ladeFavoriten();
 ladeCustomStandardMaterial();
 ladeEigeneArtikel();

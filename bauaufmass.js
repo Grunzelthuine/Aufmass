@@ -31,16 +31,21 @@ const BAU_VERTEILUNG_VORSCHLAEGE = ["HV", "UV EG", "UV OG", "UV KG", "UV Garage"
 
 const BAU_POSITIONEN_GRUPPEN = [
   { id: "installation", titel: "Installation", immerOffen: true, positionen: [
-    { key: "steckdose", b: "Steckdose" },
-    { key: "cat1", b: "Cat 1-fach" },
-    { key: "cat2", b: "Cat 2-fach" },
-    { key: "sat", b: "Sat-Anschluss" },
+    { key: "steckdose", b: "Steckdose", abd: true },
+    { key: "cat1", b: "Cat 1-fach", abd: true },
+    { key: "cat2", b: "Cat 2-fach", abd: true },
+    { key: "sat", b: "Sat-Anschluss", abd: true },
+    { key: "blind", b: "Blindabdeckung", abd: true },
+    { key: "leerrohr", b: "Leerrohrverbindung" },
     { key: "fbh", b: "FBH Thermostat" }
   ] },
-  { id: "melder", titel: "Melder", positionen: [
-    { key: "rauchmelder", b: "Rauchmelder" },
-    { key: "bewegungsmelder", b: "Bewegungsmelder" },
-    { key: "praesenzmelder", b: "Präsenzmelder" }
+  // Nur sichtbar, wenn im Bauaufmaß „Rahmen zählen“ aktiv ist (oder schon Werte erfasst sind)
+  { id: "rahmen", titel: "Rahmen", nurMitRahmen: true, positionen: [
+    { key: "rahmen1", b: "Rahmen 1-fach", abd: true },
+    { key: "rahmen2", b: "Rahmen 2-fach", abd: true },
+    { key: "rahmen3", b: "Rahmen 3-fach", abd: true },
+    { key: "rahmen4", b: "Rahmen 4-fach", abd: true },
+    { key: "rahmen5", b: "Rahmen 5-fach", abd: true }
   ] },
   { id: "geraete", titel: "Geräteanschlüsse", positionen: [
     { key: "herd", b: "Herdanschluss" },
@@ -52,8 +57,8 @@ const BAU_POSITIONEN_GRUPPEN = [
     { key: "durchlauferhitzer", b: "Anschluss Durchlauferhitzer" }
   ] },
   { id: "komm", titel: "Kommunikation", positionen: [
-    { key: "tae", b: "TAE / Telefon" },
-    { key: "klingel", b: "Klingel / Sprechanlage" }
+    { key: "tae", b: "TAE / Telefon", abd: true },
+    { key: "klingel", b: "Klingel / Sprechanlage", abd: true }
   ] }
 ];
 
@@ -101,6 +106,26 @@ const BAU_AUSLAESSE = [
    e: Einheit der Hauptzeile (Standard Stck), mengeFeld: Feld für Menge (Standard anzahl) */
 const F_ANZAHL = { k: "anzahl", t: "counter", l: "Anzahl", min: 1, d: 1 };
 const F_TYP = (ph) => ({ k: "typ", t: "text", l: "Typ / Hersteller", ph: ph || "optional" });
+// Typ aus der gespeicherten Produktliste (v12): speichert typ (Name), nr (Art.-Nr.), produktId
+const F_PRODUKT = (kat) => ({ k: "typ", t: "produkt", l: "Typ", kat });
+
+/* ---------- Produktliste (v12) ----------
+   Global (nicht je Bauaufmaß) gespeicherte Produkte, einmal angelegt per
+   Freitext oder EAN-/Art.-Nr.-Suche im Katalog, danach in den Dropdowns
+   wählbar. localStorage aufmass_v1_produkte: [{id, kat, name, nr, ean}] */
+const STORAGE_KEY_PRODUKTE = "aufmass_v1_produkte";
+const PRODUKT_KATEGORIEN = [
+  { key: "abdeckung", b: "Abdeckungen / Schalterprogramme", ph: "z. B. Gira E2 reinweiß glänzend" },
+  { key: "knx_tastsensor", b: "KNX-Tastsensoren", ph: "z. B. MDT Taster Plus 55 4-fach" },
+  { key: "knx_glastaster", b: "MDT Glastaster II Smart", ph: "z. B. BE-GTS2TS.01 schwarz" },
+  { key: "knx_pille", b: "KNX-Tasterschnittstellen (Pille)", ph: "z. B. MDT BE-04000.02" },
+  { key: "knx_praesenz", b: "KNX-Präsenzmelder", ph: "z. B. MDT SCN-P360D3.02" },
+  { key: "knx_bewegung", b: "KNX-Bewegungsmelder", ph: "" },
+  { key: "knx_rtr", b: "KNX-Raumtemperaturregler", ph: "" },
+  { key: "praesenz", b: "Präsenzmelder (konventionell)", ph: "z. B. Theben theRonda P360" },
+  { key: "bewegung", b: "Bewegungsmelder (konventionell)", ph: "z. B. Steinel IS 3360" },
+  { key: "rauchmelder", b: "Rauchmelder", ph: "z. B. Ei Electronics Ei650" }
+];
 const AMP = (liste) => liste.map((a) => a + " A");
 const QUERSCHNITTE = ["1,5 mm²", "2,5 mm²", "4 mm²", "6 mm²", "10 mm²", "16 mm²", "25 mm²", "35 mm²"];
 const ohneA = (s) => String(s || "").replace(/\s*A$/, "");
@@ -108,22 +133,29 @@ const ohneA = (s) => String(s || "").replace(/\s*A$/, "");
 const KNX_TYPEN = [
   { key: "tastsensor", b: "KNX-Tastsensor", felder: [
     { k: "fach", t: "segment", l: "Fachigkeit", o: ["1-fach", "2-fach", "4-fach", "6-fach", "8-fach"], d: "4-fach" },
-    F_ANZAHL, F_TYP("z. B. MDT Taster Plus") ],
+    F_ANZAHL, F_PRODUKT("knx_tastsensor") ],
     bez: (i) => "KNX-Tastsensor" + (i.fach ? " " + i.fach : "") },
   { key: "glastaster", b: "MDT Glastaster II Smart", felder: [
     { k: "variante", t: "segment", l: "Ausführung", o: ["mit Temperatursensor", "ohne Temperatursensor"], d: "mit Temperatursensor" },
-    F_ANZAHL, { k: "typ", t: "text", l: "Farbe / Typ", ph: "z. B. schwarz" } ],
+    F_ANZAHL, F_PRODUKT("knx_glastaster") ],
     bez: (i) => "MDT Glastaster II Smart, " + i.variante },
   { key: "pille", b: "Tasterschnittstelle (Pille)", felder: [
     { k: "anzahl", t: "counter", l: "Anzahl Pillen", min: 1, d: 1 },
     { k: "ausfuehrung", t: "segment", l: "Mit", o: ["Taster", "Serientaster"], d: "Taster" },
     { k: "tasterAnzahl", t: "counter", l: (i) => "Anzahl " + i.ausfuehrung, min: 0, d: 1 },
-    F_TYP("Typ Pille, z. B. MDT BE-04000.02") ],
+    F_PRODUKT("knx_pille") ],
     bez: () => "KNX-Tasterschnittstelle (Pille)",
     unter: (i) => (i.tasterAnzahl > 0 ? [{ b: i.ausfuehrung, menge: i.tasterAnzahl, bGesamt: i.ausfuehrung + " (an Pille)" }] : []) },
-  { key: "praesenz", b: "KNX-Präsenzmelder", felder: [F_ANZAHL, F_TYP()], bez: () => "KNX-Präsenzmelder" },
-  { key: "bewegung", b: "KNX-Bewegungsmelder", felder: [F_ANZAHL, F_TYP()], bez: () => "KNX-Bewegungsmelder" },
-  { key: "rtr", b: "KNX-Raumtemperaturregler", felder: [F_ANZAHL, F_TYP()], bez: () => "KNX-Raumtemperaturregler" }
+  { key: "praesenz", b: "KNX-Präsenzmelder", felder: [F_ANZAHL, F_PRODUKT("knx_praesenz")], bez: () => "KNX-Präsenzmelder" },
+  { key: "bewegung", b: "KNX-Bewegungsmelder", felder: [F_ANZAHL, F_PRODUKT("knx_bewegung")], bez: () => "KNX-Bewegungsmelder" },
+  { key: "rtr", b: "KNX-Raumtemperaturregler", felder: [F_ANZAHL, F_PRODUKT("knx_rtr")], bez: () => "KNX-Raumtemperaturregler" }
+];
+
+// Konventionelle Melder im Raum (v12: statt Zähler, mit Produktauswahl)
+const MELDER_TYPEN = [
+  { key: "rauchmelder", b: "Rauchmelder", felder: [F_ANZAHL, F_PRODUKT("rauchmelder")], bez: () => "Rauchmelder" },
+  { key: "bewegung", b: "Bewegungsmelder", felder: [F_ANZAHL, F_PRODUKT("bewegung")], bez: () => "Bewegungsmelder" },
+  { key: "praesenz", b: "Präsenzmelder", felder: [F_ANZAHL, F_PRODUKT("praesenz")], bez: () => "Präsenzmelder" }
 ];
 
 // Hinweis: Feldnamen "id", "art" (Komponententyp) sind reserviert; "typ" ist der Freitext.
@@ -282,12 +314,13 @@ function neuesBauaufmass() {
     baustelle: "",
     arbeitsbeschreibung: "",
     etagen: [],       // { id, name, raeume: [Raum] }
+    abdeckung: { standard: "", rahmen: false }, // Standard-Abdeckung + „Rahmen zählen“ (v12)
     verteilungen: []  // { id, name, standort, typ, bemerkung, komponenten: [], material: [] }
   };
 }
 
 function neuerRaum(name) {
-  return { id: neueId(), name, positionen: {}, schaltungen: [], rollos: [], knx: [], material: [] };
+  return { id: neueId(), name, abdeckung: "", positionen: {}, schaltungen: [], rollos: [], knx: [], melder: [], abw: [], material: [] };
 }
 
 function neueVerteilung(name) {
@@ -310,6 +343,7 @@ function neueKomponente(typ, werte) {
 
 function migriereBauaufmass(b) {
   if (!Array.isArray(b.verteilungen)) b.verteilungen = [];
+  if (!b.abdeckung || typeof b.abdeckung !== "object") b.abdeckung = { standard: "", rahmen: false };
   b.etagen.forEach((e) => e.raeume.forEach(migriereRaum));
 }
 
@@ -325,6 +359,14 @@ function migriereRaum(raum) {
   delete p.knxtaster;
   if (p.rtr > 0) raum.knx.push(neueKomponente(komponentenTyp(KNX_TYPEN, "rtr"), { anzahl: p.rtr }));
   delete p.rtr;
+  // v12: Melder-Zähler -> Melder-Einträge mit Produktauswahl; Abdeckung je Raum/Position
+  if (!Array.isArray(raum.melder)) raum.melder = [];
+  if (!Array.isArray(raum.abw)) raum.abw = [];
+  if (typeof raum.abdeckung !== "string") raum.abdeckung = "";
+  for (const [alt, neu] of [["rauchmelder", "rauchmelder"], ["bewegungsmelder", "bewegung"], ["praesenzmelder", "praesenz"]]) {
+    if (p[alt] > 0) raum.melder.push(neueKomponente(komponentenTyp(MELDER_TYPEN, neu), { anzahl: p[alt] }));
+    delete p[alt];
+  }
 }
 
 function rolloBedienung(key) {
@@ -593,6 +635,11 @@ function renderKomponentenListe(container, halter, feld, typen, onChange) {
         felderEl.appendChild(baueSegment(label, f.o, item[f.k], (v) => { item[f.k] = v; autosave(); neuZeichnen(); }));
       } else if (f.t === "select") {
         felderEl.appendChild(baueSelectFeld(label, f.o, item[f.k], (v) => { item[f.k] = v; autosave(); onChange(); }));
+      } else if (f.t === "produkt") {
+        felderEl.appendChild(baueProduktAuswahl({
+          kat: f.kat, wert: item.typ, leerText: `${label}: – offen –`, label,
+          onChange: ({ name, nr, produktId }) => { item.typ = name; item.nr = nr; item.produktId = produktId; autosave(); }
+        }));
       } else if (f.t === "text") {
         felderEl.appendChild(baueTextFeld(f.ph || "optional", item[f.k], (v) => { item[f.k] = v; autosave(); }, label));
       }
@@ -617,12 +664,362 @@ function scrolleZuLetzter(selector) {
   if (karten.length) karten[karten.length - 1].scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
+/* ---------- Produktliste: Speicher + Katalogsuche (v12) ---------- */
+
+let produkte = [];
+
+function ladeProdukte() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PRODUKTE);
+    produkte = raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.error("Produktliste konnte nicht geladen werden", e);
+    produkte = [];
+  }
+}
+
+function speichereProdukte() {
+  try {
+    localStorage.setItem(STORAGE_KEY_PRODUKTE, JSON.stringify(produkte));
+  } catch (e) {
+    console.error("Produktliste konnte nicht gespeichert werden", e);
+    alert("Speichern der Produktliste fehlgeschlagen.");
+  }
+}
+
+function produkteDerKategorie(kat) {
+  return produkte.filter((p) => p.kat === kat).sort((a, b) => a.name.localeCompare(b.name, "de"));
+}
+
+function produktKategorie(kat) {
+  return PRODUKT_KATEGORIEN.find((k) => k.key === kat) || { key: kat, b: kat, ph: "" };
+}
+
+function legeProduktAn(kat, name, nr, ean) {
+  const vorhanden = produkte.find((p) => p.kat === kat && p.name.toLowerCase() === name.toLowerCase());
+  if (vorhanden) {
+    if (nr) vorhanden.nr = nr;
+    if (ean) vorhanden.ean = ean;
+    speichereProdukte();
+    return vorhanden;
+  }
+  const p = { id: neueId(), kat, name, nr: nr || "", ean: ean || "" };
+  produkte.push(p);
+  speichereProdukte();
+  return p;
+}
+
+// Code (EAN oder Art.-Nr.) im Katalog bzw. bei den eigenen Artikeln suchen.
+function sucheArtikelZuCode(code) {
+  const c = (code || "").trim();
+  if (!c) return null;
+  const perEan = typeof sucheNachEan === "function" ? sucheNachEan(c, 5) : [];
+  if (perEan.length) return perEan[0];
+  const eigen = (typeof eigeneArtikel !== "undefined" ? eigeneArtikel : []).find((a) => a.n === c);
+  if (eigen) return eigen;
+  if (typeof materialDB !== "undefined") {
+    for (let i = 0; i < materialDB.length; i++) if (materialDB[i].n === c) return materialDB[i];
+  }
+  return null;
+}
+
+/* Formular „Neues Produkt“: Bezeichnung (Freitext) und/oder Art.-Nr./EAN
+   (Kamera-Scan oder Eingabe, Suche im Katalog füllt die Bezeichnung).
+   kat = feste Kategorie oder null (dann Auswahlfeld). */
+function baueProduktFormular({ kat, onSave, onCancel }) {
+  const form = document.createElement("div");
+  form.className = "selected-article produkt-form";
+  form.innerHTML = `
+    <label class="pf-kat-wrap">Kategorie <select class="pf-kat"></select></label>
+    <label>Art.-Nr. / EAN (optional)
+      <div class="suche-mit-scan">
+        <input type="text" class="pf-code" inputmode="numeric" placeholder="scannen oder eingeben" autocomplete="off">
+        <button type="button" class="btn-scan pf-scan" aria-label="Barcode scannen">📷</button>
+        <button type="button" class="btn btn-secondary pf-suchen">Suchen</button>
+      </div>
+    </label>
+    <p class="hint pf-hinweis" hidden></p>
+    <label>Bezeichnung
+      <input type="text" class="pf-name" autocomplete="off">
+    </label>
+    <div class="action-bar">
+      <button type="button" class="btn btn-secondary pf-speichern" disabled>Produkt speichern</button>
+      <button type="button" class="btn-danger-text pf-abbrechen">Abbrechen</button>
+    </div>`;
+  const katSel = form.querySelector(".pf-kat");
+  for (const k of PRODUKT_KATEGORIEN) {
+    const o = document.createElement("option");
+    o.value = k.key;
+    o.textContent = k.b;
+    katSel.appendChild(o);
+  }
+  if (kat) { katSel.value = kat; form.querySelector(".pf-kat-wrap").hidden = true; }
+  const name = form.querySelector(".pf-name");
+  const code = form.querySelector(".pf-code");
+  const hinweis = form.querySelector(".pf-hinweis");
+  const btnSpeichern = form.querySelector(".pf-speichern");
+  let gefundeneNr = "";
+  let gefundeneEan = "";
+  const setzePlatzhalter = () => { name.placeholder = produktKategorie(katSel.value).ph || "Bezeichnung"; };
+  setzePlatzhalter();
+  katSel.addEventListener("change", setzePlatzhalter);
+  const pruefe = () => { btnSpeichern.disabled = !name.value.trim(); };
+  name.addEventListener("input", pruefe);
+
+  const suche = (wert) => {
+    const c = (wert || "").trim();
+    if (!c) { code.focus(); return; }
+    code.value = c;
+    hinweis.hidden = false;
+    const treffer = sucheArtikelZuCode(c);
+    if (treffer) {
+      name.value = treffer.b;
+      gefundeneNr = treffer.n;
+      gefundeneEan = treffer.g || (istEanAehnlich(c) ? c : "");
+      hinweis.innerHTML = `✓ Gefunden: <strong>${escapeHtml(treffer.b)}</strong> (Art.-Nr. ${escapeHtml(treffer.n)}) – Bezeichnung kann noch angepasst werden.`;
+    } else {
+      gefundeneNr = istEanAehnlich(c) ? "" : c;
+      gefundeneEan = istEanAehnlich(c) ? c : "";
+      hinweis.textContent = (typeof materialDBReady !== "undefined" && !materialDBReady)
+        ? "Materialliste wird noch geladen – Bezeichnung bitte selbst eintragen oder gleich noch einmal suchen."
+        : "Nicht im Katalog gefunden – Bezeichnung bitte selbst eintragen.";
+      name.focus();
+    }
+    pruefe();
+  };
+  form.querySelector(".pf-suchen").addEventListener("click", () => suche(code.value));
+  code.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); suche(code.value); } });
+  form.querySelector(".pf-scan").addEventListener("click", () => oeffneBarcodeScanner((roh) => suche(roh)));
+  code.addEventListener("input", () => { gefundeneNr = ""; gefundeneEan = ""; });
+
+  btnSpeichern.addEventListener("click", () => {
+    const n = name.value.trim();
+    if (!n) return;
+    const c = code.value.trim();
+    const nr = gefundeneNr || (c && !istEanAehnlich(c) ? c : "");
+    const ean = gefundeneEan || (istEanAehnlich(c) ? c : "");
+    onSave(legeProduktAn(katSel.value, n, nr, ean));
+  });
+  form.querySelector(".pf-abbrechen").addEventListener("click", () => onCancel && onCancel());
+  setTimeout(() => name.focus(), 0);
+  return form;
+}
+
+/* Dropdown für Typ/Abdeckung aus der Produktliste.
+   wert = aktueller Name (Freitext erlaubt), leerText = Text für „nichts gewählt“.
+   onChange({ name, nr, produktId }) */
+function baueProduktAuswahl({ kat, wert, leerText, label, onChange }) {
+  const wrap = document.createElement("div");
+  wrap.className = "produkt-auswahl";
+  if (label) {
+    const l = document.createElement("div");
+    l.className = "rollo-bedienung-label";
+    l.textContent = label;
+    wrap.appendChild(l);
+  }
+  const select = document.createElement("select");
+  wrap.appendChild(select);
+  const freiZeile = document.createElement("div");
+  freiZeile.className = "inline-add";
+  freiZeile.hidden = true;
+  freiZeile.innerHTML = `<input type="text" placeholder="Freitext"><button type="button" class="btn btn-secondary">OK</button>`;
+  wrap.appendChild(freiZeile);
+  const formPlatz = document.createElement("div");
+  wrap.appendChild(formPlatz);
+  let aktuell = wert || "";
+
+  const fuelle = () => {
+    select.innerHTML = "";
+    const add = (value, text) => {
+      const o = document.createElement("option");
+      o.value = value;
+      o.textContent = text;
+      select.appendChild(o);
+    };
+    add("", leerText);
+    const liste = produkteDerKategorie(kat);
+    let gewaehlt = "";
+    for (const p of liste) {
+      add("p:" + p.id, p.name + (p.nr ? ` · ${p.nr}` : ""));
+      if (aktuell && p.name === aktuell) gewaehlt = "p:" + p.id;
+    }
+    if (aktuell && !gewaehlt) { add("x:", aktuell + " (Freitext)"); gewaehlt = "x:"; }
+    add("__frei__", "✎ Freitext eingeben…");
+    add("__neu__", "＋ Neues Produkt anlegen (Liste / EAN-Scan)…");
+    select.value = gewaehlt;
+  };
+  const setze = (name, nr, produktId) => {
+    aktuell = name || "";
+    onChange({ name: aktuell, nr: nr || "", produktId: produktId || "" });
+    fuelle();
+  };
+  fuelle();
+
+  select.addEventListener("change", () => {
+    const v = select.value;
+    freiZeile.hidden = true;
+    formPlatz.innerHTML = "";
+    if (v === "") setze("", "", "");
+    else if (v.startsWith("p:")) {
+      const p = produkte.find((x) => x.id === v.slice(2));
+      if (p) setze(p.name, p.nr, p.id);
+    } else if (v === "__frei__") {
+      freiZeile.hidden = false;
+      const inp = freiZeile.querySelector("input");
+      inp.value = aktuell;
+      inp.focus();
+      fuelle();
+      select.value = "__frei__";
+    } else if (v === "__neu__") {
+      formPlatz.appendChild(baueProduktFormular({
+        kat,
+        onSave: (p) => { formPlatz.innerHTML = ""; setze(p.name, p.nr, p.id); },
+        onCancel: () => { formPlatz.innerHTML = ""; fuelle(); }
+      }));
+    }
+  });
+  const freiOk = () => {
+    const t = freiZeile.querySelector("input").value.trim();
+    freiZeile.hidden = true;
+    setze(t, "", "");
+  };
+  freiZeile.querySelector("button").addEventListener("click", freiOk);
+  freiZeile.querySelector("input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); freiOk(); } });
+  return wrap;
+}
+
+/* ---------- Produktliste: Verwaltungsansicht (v12) ---------- */
+
+function oeffneProduktliste() {
+  currentAufmass = null;
+  currentPackliste = null;
+  currentBauaufmass = null;
+  currentRaum = null;
+  zurueckAktion = null;
+  headerTitle.textContent = "Produktliste";
+  btnBack.hidden = false;
+  btnNew.hidden = true;
+  app.innerHTML = "";
+  const view = document.createElement("section");
+  view.className = "view";
+  view.innerHTML = `
+    <p class="hint" style="padding-top:0">Hier angelegte Produkte stehen im Bauaufmaß als Auswahl bereit (Typ bei KNX-Komponenten und Meldern, Abdeckungen). Anlegen per Freitext oder per EAN-/Art.-Nr.-Suche im Katalog. Gespeichert nur auf diesem Gerät.</p>
+    <div class="pl-neu"></div>
+    <div class="pl-liste view"></div>`;
+  app.appendChild(view);
+
+  const neuPlatz = view.querySelector(".pl-neu");
+  const zeigeNeuButton = () => {
+    neuPlatz.innerHTML = `<button type="button" class="btn btn-secondary">＋ Neues Produkt anlegen</button>`;
+    neuPlatz.querySelector("button").addEventListener("click", () => {
+      neuPlatz.innerHTML = "";
+      neuPlatz.appendChild(baueProduktFormular({
+        kat: null,
+        onSave: () => { zeigeNeuButton(); renderListe(); },
+        onCancel: zeigeNeuButton
+      }));
+    });
+  };
+  const renderListe = () => {
+    const liste = view.querySelector(".pl-liste");
+    liste.innerHTML = "";
+    for (const k of PRODUKT_KATEGORIEN) {
+      const eintraege = produkteDerKategorie(k.key);
+      const det = document.createElement("details");
+      det.className = "section-card";
+      det.open = eintraege.length > 0;
+      det.innerHTML = `<summary></summary><ul class="pl-eintraege"></ul><div class="pl-add"></div>`;
+      det.querySelector("summary").textContent = `${k.b} (${eintraege.length})`;
+      const ul = det.querySelector(".pl-eintraege");
+      if (!eintraege.length) {
+        const li = document.createElement("li");
+        li.className = "hint";
+        li.textContent = "Noch keine Produkte.";
+        ul.appendChild(li);
+      }
+      for (const p of eintraege) {
+        const li = document.createElement("li");
+        li.className = "pl-eintrag";
+        li.innerHTML = `<div class="info"><strong></strong><small></small></div>
+          <span class="komp-aktionen">
+            <button type="button" class="btn-mini" aria-label="Umbenennen">✎</button>
+            <button type="button" class="btn-mini btn-mini-danger" aria-label="Löschen">✕</button>
+          </span>`;
+        li.querySelector("strong").textContent = p.name;
+        li.querySelector("small").textContent = [p.nr && `Art.-Nr. ${p.nr}`, p.ean && `EAN ${p.ean}`].filter(Boolean).join(" · ");
+        li.querySelector('[aria-label="Umbenennen"]').addEventListener("click", () => {
+          const neu = prompt("Bezeichnung:", p.name);
+          if (neu && neu.trim()) { p.name = neu.trim(); speichereProdukte(); renderListe(); }
+        });
+        li.querySelector('[aria-label="Löschen"]').addEventListener("click", () => {
+          if (!confirm(`„${p.name}“ aus der Produktliste löschen? (Bereits erfasste Aufmaße behalten den Eintrag.)`)) return;
+          produkte = produkte.filter((x) => x.id !== p.id);
+          speichereProdukte();
+          renderListe();
+        });
+        ul.appendChild(li);
+      }
+      const addPlatz = det.querySelector(".pl-add");
+      const zeigeAdd = () => {
+        addPlatz.innerHTML = `<button type="button" class="btn-link-accent">＋ hinzufügen</button>`;
+        addPlatz.querySelector("button").addEventListener("click", () => {
+          addPlatz.innerHTML = "";
+          addPlatz.appendChild(baueProduktFormular({ kat: k.key, onSave: renderListe, onCancel: zeigeAdd }));
+        });
+      };
+      zeigeAdd();
+      liste.appendChild(det);
+    }
+  };
+  zeigeNeuButton();
+  renderListe();
+  window.scrollTo(0, 0);
+}
+
+/* ---------- Abdeckungen (v12) ----------
+   Bauaufmaß: Standard-Abdeckung; Raum: abweichende Abdeckung; Position
+   (Schaltung, Rollo, Zähler über „abw“-Einträge): eigene Abdeckung. */
+
+function raumAbdeckung(b, raum) {
+  return ((raum && raum.abdeckung) || "").trim() || ((b.abdeckung && b.abdeckung.standard) || "").trim();
+}
+
+function positionsAbdeckung(b, raum, eigene) {
+  return (eigene || "").trim() || raumAbdeckung(b, raum);
+}
+
+function mitAbdeckung(bez, abd) {
+  return abd ? `${bez} · ${abd}` : bez;
+}
+
+function abdeckungsPositionen(b) {
+  const liste = [];
+  for (const g of BAU_POSITIONEN_GRUPPEN) {
+    if (g.nurMitRahmen && !(b.abdeckung && b.abdeckung.rahmen)) continue;
+    for (const p of g.positionen) if (p.abd) liste.push({ ...p, gruppe: g.id });
+  }
+  return liste;
+}
+
+function positionNachKey(key) {
+  for (const g of BAU_POSITIONEN_GRUPPEN) {
+    const p = g.positionen.find((x) => x.key === key);
+    if (p) return { ...p, gruppe: g.id };
+  }
+  return { key, b: key, gruppe: "" };
+}
+
 /* ---------- Übersicht (Bereich in zeigeUebersicht) ---------- */
 
 function renderBauaufmassUebersicht() {
   const btn = document.getElementById("btnNewBauaufmass");
   if (!btn) return;
   btn.addEventListener("click", () => oeffneBauaufmass(neuesBauaufmass()));
+  const plBtn = document.getElementById("btnProduktliste");
+  if (plBtn) {
+    plBtn.textContent = `⚙ Produktliste (Abdeckungen, KNX, Melder) · ${produkte.length}`;
+    plBtn.addEventListener("click", oeffneProduktliste);
+  }
   const listeEl = document.getElementById("bauaufmassListe");
   const leerEl = document.getElementById("bauaufmasseLeer");
   leerEl.hidden = bauaufmasse.length !== 0;
@@ -677,6 +1074,15 @@ function oeffneBauaufmass(b, scrollY) {
     el.value = getter();
     el.addEventListener("input", (e) => { setter(e.target.value); autosave(); });
   }
+  // Abdeckung / Rahmen (v12)
+  const abdPlatz = document.getElementById("b_abdeckung");
+  abdPlatz.appendChild(baueProduktAuswahl({
+    kat: "abdeckung", wert: b.abdeckung.standard, leerText: "– keine Angabe –", label: "Standard-Abdeckung / Schalterprogramm",
+    onChange: ({ name }) => { b.abdeckung.standard = name; autosave(); }
+  }));
+  abdPlatz.appendChild(baueSegment("Rahmen zählen", [{ key: "nein", b: "Nein" }, { key: "ja", b: "Ja (1- bis 5-fach je Raum)" }],
+    b.abdeckung.rahmen ? "ja" : "nein", (v) => { b.abdeckung.rahmen = v === "ja"; autosave(); }));
+
   document.getElementById("b_datumHinweis").textContent =
     `Datum im Export: ${formatDatumDE(erstelltDatumISO(b))} (Erstellungsdatum)`;
 
@@ -906,6 +1312,14 @@ function oeffneRaum(etage, raum) {
   });
   document.getElementById("r_etage").textContent = etage.name;
 
+  // Abdeckung des Raums (v12)
+  const std = (b.abdeckung.standard || "").trim();
+  document.getElementById("r_abdeckung").appendChild(baueProduktAuswahl({
+    kat: "abdeckung", wert: raum.abdeckung, label: "Abdeckung in diesem Raum",
+    leerText: `Standard des Bauaufmaßes (${std || "keine Angabe"})`,
+    onChange: ({ name }) => { raum.abdeckung = name; autosave(); renderSchaltungen(); renderRollos(); renderAbw(); }
+  }));
+
   // Beleuchtung
   renderSchaltungen();
   document.getElementById("r_schaltungAuswahl").appendChild(baueAuswahl({
@@ -915,7 +1329,7 @@ function oeffneRaum(etage, raum) {
     onAdd: (key) => {
       const t = schaltungTyp(key);
       const s = { id: neueId(), typ: t.key, schaltstellen: t.min, wand: 0, decke: 0, steckdose: 0, strahler: 0, bemerkung: "" };
-      if (t.melder) Object.assign(s, { melderArt: "praesenz", melderAnzahl: 1, melderTyp: "" });
+      if (t.melder) Object.assign(s, { melderArt: "praesenz", melderAnzahl: 1, melderTyp: "", melderNr: "" });
       raum.schaltungen.push(s);
       autosave();
       renderSchaltungen();
@@ -951,13 +1365,32 @@ function oeffneRaum(etage, raum) {
     scrolleZuLetzter("#r_knx .komp-karte");
   }));
 
+  // Melder (konventionell, v12 mit Produktauswahl)
+  const renderMelder = () => {
+    renderKomponentenListe(document.getElementById("r_melder"), raum, "melder", MELDER_TYPEN, aktualisiereMelderTitel);
+    aktualisiereMelderTitel();
+  };
+  const aktualisiereMelderTitel = () => {
+    document.getElementById("r_anzahlMelder").textContent = raum.melder.reduce((s, k) => s + (k.anzahl || 0), 0);
+    document.getElementById("r_melderLeer").hidden = raum.melder.length !== 0;
+  };
+  renderMelder();
+  document.getElementById("r_melderDetails").open = raum.melder.length > 0;
+  document.getElementById("r_melderAuswahl").appendChild(komponentenAuswahl(MELDER_TYPEN, "＋ Melder hinzufügen…", (typ) => {
+    raum.melder.push(neueKomponente(typ));
+    autosave();
+    renderMelder();
+    scrolleZuLetzter("#r_melder .komp-karte");
+  }));
+
   // Zähler-Gruppen
   const gruppenEl = document.getElementById("r_gruppen");
   for (const g of BAU_POSITIONEN_GRUPPEN) {
+    const summe = () => g.positionen.reduce((s, p) => s + (raum.positionen[p.key] || 0), 0);
+    if (g.nurMitRahmen && !b.abdeckung.rahmen && summe() === 0) continue;
     const details = document.createElement("details");
     details.className = "section-card";
-    const summe = () => g.positionen.reduce((s, p) => s + (raum.positionen[p.key] || 0), 0);
-    details.open = g.immerOffen || summe() > 0;
+    details.open = g.immerOffen || summe() > 0 || (g.nurMitRahmen && b.abdeckung.rahmen);
     const summary = document.createElement("summary");
     const setzeTitel = () => {
       const s = summe();
@@ -976,6 +1409,17 @@ function oeffneRaum(etage, raum) {
     gruppenEl.appendChild(details);
   }
 
+  // Positionen mit abweichender Abdeckung (v12)
+  renderAbw();
+  document.getElementById("r_abwDetails").open = raum.abw.length > 0;
+  document.getElementById("r_abwHinzufuegen").addEventListener("click", () => {
+    const erste = abdeckungsPositionen(b)[0];
+    raum.abw.push({ id: neueId(), key: erste ? erste.key : "steckdose", abdeckung: "", anzahl: 1 });
+    autosave();
+    renderAbw();
+    scrolleZuLetzter(".abw-karte");
+  });
+
   // Material (Katalog / Standard / Freitext)
   klonMaterialTabs("materialHinzufuegenRaum");
   bindeMaterialAuswahl(raum.material, () => {
@@ -989,7 +1433,7 @@ function oeffneRaum(etage, raum) {
     const kopie = JSON.parse(JSON.stringify(raum));
     kopie.id = neueId();
     kopie.name = kopieRaumname(etage, raum.name || "Raum");
-    for (const feld of ["schaltungen", "rollos", "knx", "material"]) kopie[feld].forEach((x) => (x.id = neueId()));
+    for (const feld of ["schaltungen", "rollos", "knx", "melder", "abw", "material"]) (kopie[feld] || []).forEach((x) => (x.id = neueId()));
     etage.raeume.splice(etage.raeume.indexOf(raum) + 1, 0, kopie);
     autosave();
     oeffneRaum(etage, kopie);
@@ -999,6 +1443,54 @@ function oeffneRaum(etage, raum) {
     etage.raeume = etage.raeume.filter((r) => r.id !== raum.id);
     autosave();
     zurueckAktion();
+  });
+}
+
+// Abdeckungs-Dropdown für eine einzelne Position (Schaltung, Rollo, abweichende Position)
+function baueAbdeckungsAuswahl(obj, leerText) {
+  const raumAbd = raumAbdeckung(currentBauaufmass, currentRaum.raum);
+  return baueProduktAuswahl({
+    kat: "abdeckung", wert: obj.abdeckung, label: "Abdeckung",
+    leerText: leerText || `Wie Raum (${raumAbd || "keine Angabe"})`,
+    onChange: ({ name }) => { obj.abdeckung = name; autosave(); }
+  });
+}
+
+function renderAbw() {
+  const { raum } = currentRaum;
+  const b = currentBauaufmass;
+  const liste = document.getElementById("r_abw");
+  if (!liste) return;
+  liste.innerHTML = "";
+  document.getElementById("r_anzahlAbw").textContent = raum.abw.reduce((s, x) => s + (x.anzahl || 0), 0);
+  document.getElementById("r_abwLeer").hidden = raum.abw.length !== 0;
+  const positionen = abdeckungsPositionen(b);
+  raum.abw.forEach((e, i) => {
+    const karte = document.createElement("div");
+    karte.className = "schaltung-karte abw-karte";
+    karte.innerHTML = `
+      <div class="schaltung-kopf">
+        <strong>${i + 1}. Abweichende Abdeckung</strong>
+        <button type="button" class="btn-danger-text" aria-label="Entfernen">✕</button>
+      </div>`;
+    karte.querySelector(".btn-danger-text").addEventListener("click", () => {
+      raum.abw = raum.abw.filter((x) => x.id !== e.id);
+      autosave();
+      renderAbw();
+    });
+    const optionen = positionen.map((p) => p.b);
+    const aktuell = positionNachKey(e.key).b;
+    karte.appendChild(baueSelectFeld("Position", optionen, aktuell, (v) => {
+      const p = positionen.find((x) => x.b === v);
+      if (p) { e.key = p.key; autosave(); }
+    }));
+    karte.appendChild(baueAbdeckungsAuswahl(e, "– Abdeckung wählen –"));
+    karte.appendChild(baueZaehler("Anzahl", e.anzahl || 1, 1, (v) => {
+      e.anzahl = v;
+      document.getElementById("r_anzahlAbw").textContent = raum.abw.reduce((s, x) => s + (x.anzahl || 0), 0);
+      autosave();
+    }));
+    liste.appendChild(karte);
   });
 }
 
@@ -1029,16 +1521,20 @@ function renderSchaltungen() {
     const zaehler = karte.querySelector(".schaltung-zaehler");
     if (t.melder) {
       zaehler.appendChild(baueSegment("Melder", BAU_MELDERARTEN, s.melderArt || "praesenz", (v) => {
+        if (s.melderArt !== v) { s.melderTyp = ""; s.melderNr = ""; }
         s.melderArt = v;
         autosave();
-        const lbl = karte.querySelector(".melder-anzahl .zaehler-label");
-        if (lbl) lbl.textContent = `Anzahl ${melderArt(v).b}`;
+        renderSchaltungen(); // Typ-Auswahl passend zur Melderart neu aufbauen
       }));
       const za = baueZaehler(`Anzahl ${melderArt(s.melderArt).b}`, s.melderAnzahl || 1, 1, (v) => { s.melderAnzahl = v; autosave(); });
       za.classList.add("melder-anzahl");
       zaehler.appendChild(za);
-      zaehler.appendChild(baueTextFeld("z. B. Theben theRonda P360", s.melderTyp, (v) => { s.melderTyp = v; autosave(); }, "Typ Melder"));
-      zaehler.lastChild.classList.add("melder-typ");
+      const mp = baueProduktAuswahl({
+        kat: s.melderArt === "bewegung" ? "bewegung" : "praesenz", wert: s.melderTyp, label: "Typ Melder", leerText: "Typ Melder: – offen –",
+        onChange: ({ name, nr }) => { s.melderTyp = name; s.melderNr = nr; autosave(); }
+      });
+      mp.classList.add("melder-typ");
+      zaehler.appendChild(mp);
     } else {
       const zs = baueZaehler(t.stellenLabel || "Schaltstellen", s.schaltstellen, t.min, (v) => { s.schaltstellen = v; autosave(); });
       zs.classList.add("zaehler-schaltstellen");
@@ -1047,6 +1543,7 @@ function renderSchaltungen() {
     for (const a of BAU_AUSLAESSE) {
       zaehler.appendChild(baueZaehler(a.b, s[a.key] || 0, 0, (v) => { s[a.key] = v; autosave(); }));
     }
+    karte.appendChild(baueAbdeckungsAuswahl(s));
     karte.appendChild(baueTextFeld("Bemerkung (optional, z. B. Spiegel, Esstisch)", s.bemerkung, (v) => { s.bemerkung = v; autosave(); }));
     liste.appendChild(karte);
   });
@@ -1088,6 +1585,7 @@ function renderRollos() {
       const bd = rolloBedienung(r.bedienung);
       if (bd.key === "keine") return;
       bedienAnzahlEl.appendChild(baueZaehler(`Anzahl ${bd.b}`, r.bedienAnzahl || 1, 1, (v) => { r.bedienAnzahl = v; autosave(); }));
+      bedienAnzahlEl.appendChild(baueAbdeckungsAuswahl(r));
     };
     karte.querySelector(".rollo-seg").appendChild(baueSegment("Bedienung vor Ort", BAU_ROLLO_BEDIENUNG, r.bedienung, (v) => {
       r.bedienung = v;
@@ -1215,7 +1713,7 @@ function komponentenZeilen(liste, typen, mitGruppen) {
       letzteGruppe = typ.gruppe;
     }
     const unter = typ.unter ? typ.unter(item) : [];
-    zeilen.push({ b: komponenteMitTyp(typ.bez(item), item), menge: item.anzahl, e: typ.e || "Stck", schaltung: unter.length > 0 });
+    zeilen.push({ b: komponenteMitTyp(typ.bez(item), item), nr: item.nr || "", menge: item.anzahl, e: typ.e || "Stck", schaltung: unter.length > 0 });
     for (const u of unter) zeilen.push({ b: u.b, menge: u.menge, e: u.e || "Stck", unter: true });
   }
   return zeilen;
@@ -1227,15 +1725,18 @@ function melderZeile(s) {
 }
 
 // Liefert die Tabellenzeilen eines Raums (nur Positionen > 0). Leeres Array = Raum taucht nicht auf.
-function bauRaumZeilen(raum) {
+function bauRaumZeilen(b, raum) {
+  migriereRaum(raum);
   const zeilen = [];
+  const raumAbd = raumAbdeckung(b, raum);
+  const eigeneAbd = (obj) => ((obj.abdeckung || "").trim() && obj.abdeckung.trim() !== raumAbd ? ` · Abdeckung ${obj.abdeckung.trim()}` : "");
   if (raum.schaltungen.length) {
     zeilen.push({ gruppe: "Beleuchtung" });
     raum.schaltungen.forEach((s) => {
       const t = schaltungTyp(s.typ);
       const bem = (s.bemerkung || "").trim();
-      zeilen.push({ b: schaltungBezeichnung(s) + (bem ? ` – ${bem}` : ""), menge: 1, e: "Stck", schaltung: true });
-      if (t.melder && s.melderAnzahl > 0) zeilen.push({ b: melderZeile(s), menge: s.melderAnzahl, e: "Stck", unter: true });
+      zeilen.push({ b: schaltungBezeichnung(s) + (bem ? ` – ${bem}` : "") + eigeneAbd(s), menge: 1, e: "Stck", schaltung: true });
+      if (t.melder && s.melderAnzahl > 0) zeilen.push({ b: melderZeile(s), nr: s.melderNr || "", menge: s.melderAnzahl, e: "Stck", unter: true });
       for (const a of BAU_AUSLAESSE) {
         if (s[a.key] > 0) zeilen.push({ b: a.b, menge: s[a.key], e: "Stck", unter: true });
       }
@@ -1249,22 +1750,29 @@ function bauRaumZeilen(raum) {
       const bem = (r.bemerkung || "").trim();
       const zusatz = bd.key === "keine" ? " (ohne Schalter/Taster)" : "";
       zeilen.push({ b: "Rollo" + zusatz + (bem ? ` – ${bem}` : ""), menge: r.anzahl, e: "Stck", schaltung: true });
-      if (bd.mat && r.bedienAnzahl > 0) zeilen.push({ b: bd.mat, menge: r.bedienAnzahl, e: "Stck", unter: true });
+      if (bd.mat && r.bedienAnzahl > 0) zeilen.push({ b: bd.mat + eigeneAbd(r), menge: r.bedienAnzahl, e: "Stck", unter: true });
     });
   }
   const knx = komponentenZeilen(raum.knx || [], KNX_TYPEN, false);
   if (knx.length) zeilen.push({ gruppe: "KNX" }, ...knx);
+  const melder = komponentenZeilen(raum.melder || [], MELDER_TYPEN, false);
+  if (melder.length) zeilen.push({ gruppe: "Melder" }, ...melder);
   for (const g of BAU_POSITIONEN_GRUPPEN) {
-    const pos = g.positionen.filter((p) => raum.positionen[p.key] > 0);
-    if (!pos.length) continue;
-    zeilen.push({ gruppe: g.titel });
-    for (const p of pos) zeilen.push({ b: p.b, menge: raum.positionen[p.key], e: "Stck" });
+    const gz = [];
+    for (const p of g.positionen) {
+      if (raum.positionen[p.key] > 0) gz.push({ b: p.b, menge: raum.positionen[p.key], e: "Stck" });
+      for (const e of raum.abw) {
+        if (e.key === p.key && e.anzahl > 0) gz.push({ b: p.b + ` · Abdeckung ${(e.abdeckung || "").trim() || "?"}`, menge: e.anzahl, e: "Stck" });
+      }
+    }
+    if (gz.length) zeilen.push({ gruppe: g.titel }, ...gz);
   }
   const mat = raum.material.filter((m) => m.menge > 0);
   if (mat.length) {
     zeilen.push({ gruppe: "Material" });
     for (const m of mat) zeilen.push({ b: m.bezeichnung, nr: m.artikelnummer || "", menge: m.menge, e: m.einheit });
   }
+  if (zeilen.length && raumAbd) zeilen.unshift({ gruppe: `Abdeckung: ${raumAbd}`, info: true });
   return zeilen;
 }
 
@@ -1288,58 +1796,76 @@ function verteilungTitel(v) {
   return teile.join(" – ").replace(/mm²/g, "qmm");
 }
 
-// Summiert Zeilen gleicher Bezeichnung/Einheit (Reihenfolge des ersten Auftretens)
+// Summiert Zeilen gleicher Bezeichnung/Einheit (sortiert nach ord, dann erstem Auftreten)
 function summenMap() {
   const map = new Map();
   return {
-    add(b, menge, e, nr) {
+    add(b, menge, e, nr, ord) {
       if (!(menge > 0)) return;
       const key = (nr || "") + "|" + b + "|" + e;
       const v = map.get(key);
       if (v) v.menge = rundeMenge(v.menge + menge);
-      else map.set(key, { b, nr: nr || "", menge, e });
+      else map.set(key, { b, nr: nr || "", menge, e, _ord: ord ?? 0, _i: map.size });
     },
-    zeilen() { return [...map.values()]; },
+    zeilen() {
+      return [...map.values()].sort((x, y) => x._ord - y._ord || x._i - y._i)
+        .map(({ b, nr, menge, e }) => ({ b, nr, menge, e }));
+    },
     get size() { return map.size; }
   };
 }
 
 function bauGesamtZeilen(b) {
-  const schaltungen = new Map();
-  const melder = summenMap();
+  const schaltungen = summenMap();
+  const melderHA = summenMap();
   const auslaesse = {};
-  const positionen = {};
-  const rolloSumme = { rollo: 0, schalter: 0, taster: 0 };
+  const rollo = summenMap();
   const knx = summenMap();
+  const melder = summenMap();
+  const gruppen = new Map(BAU_POSITIONEN_GRUPPEN.map((g) => [g.id, summenMap()]));
   const material = summenMap();
   const verteilung = new Map(); // gruppe -> summenMap
+  const rangSchaltung = (key) => BAU_SCHALTUNGSTYPEN.findIndex((t) => t.key === key);
 
   const sammleKomponenten = (liste, typen, ziel) => {
-    const sortiert = [...liste].sort((x, y) => typen.indexOf(komponentenTyp(typen, x.art)) - typen.indexOf(komponentenTyp(typen, y.art)));
-    for (const item of sortiert) {
+    for (const item of liste) {
       if (!(item.anzahl > 0)) continue;
       const typ = komponentenTyp(typen, item.art);
+      const ord = typen.indexOf(typ);
       const z = ziel(typ);
-      z.add(komponenteMitTyp(typ.bez(item), item), item.anzahl, typ.e || "Stck");
-      for (const u of typ.unter ? typ.unter(item) : []) z.add(u.bGesamt || u.b, u.menge, u.e || "Stck");
+      z.add(komponenteMitTyp(typ.bez(item), item), item.anzahl, typ.e || "Stck", item.nr, ord);
+      for (const u of typ.unter ? typ.unter(item) : []) z.add(u.bGesamt || u.b, u.menge, u.e || "Stck", "", ord + 0.5);
     }
   };
 
   for (const etage of b.etagen) {
     for (const raum of etage.raeume) {
+      migriereRaum(raum);
+      const raumAbd = raumAbdeckung(b, raum);
       for (const s of raum.schaltungen) {
-        const key = schaltungBezeichnung(s);
-        schaltungen.set(key, (schaltungen.get(key) || 0) + 1);
-        if (schaltungTyp(s.typ).melder) melder.add(melderZeile(s), s.melderAnzahl || 0, "Stck");
+        const abd = positionsAbdeckung(b, raum, s.abdeckung);
+        schaltungen.add(mitAbdeckung(schaltungBezeichnung(s), abd), 1, "Stck", "", rangSchaltung(s.typ));
+        if (schaltungTyp(s.typ).melder) melderHA.add(melderZeile(s), s.melderAnzahl || 0, "Stck", s.melderNr);
         for (const a of BAU_AUSLAESSE) if (s[a.key] > 0) auslaesse[a.key] = (auslaesse[a.key] || 0) + s[a.key];
       }
       for (const r of raum.rollos || []) {
         if (!(r.anzahl > 0)) continue;
-        rolloSumme.rollo += r.anzahl;
-        if (r.bedienung === "schalter" || r.bedienung === "taster") rolloSumme[r.bedienung] += r.bedienAnzahl || 0;
+        rollo.add("Rollo", r.anzahl, "Stck", "", 0);
+        const bd = rolloBedienung(r.bedienung);
+        if (bd.mat) rollo.add(mitAbdeckung(bd.mat, positionsAbdeckung(b, raum, r.abdeckung)), r.bedienAnzahl || 0, "Stck", "", bd.key === "schalter" ? 1 : 2);
       }
       sammleKomponenten(raum.knx || [], KNX_TYPEN, () => knx);
-      for (const [k, v] of Object.entries(raum.positionen)) if (v > 0) positionen[k] = (positionen[k] || 0) + v;
+      sammleKomponenten(raum.melder || [], MELDER_TYPEN, () => melder);
+      for (const g of BAU_POSITIONEN_GRUPPEN) {
+        const sm = gruppen.get(g.id);
+        g.positionen.forEach((p, idx) => {
+          const n = raum.positionen[p.key];
+          if (n > 0) sm.add(p.abd ? mitAbdeckung(p.b, raumAbd) : p.b, n, "Stck", "", idx);
+          for (const e of raum.abw) {
+            if (e.key === p.key && e.anzahl > 0) sm.add(mitAbdeckung(p.b, (e.abdeckung || "").trim() || raumAbd), e.anzahl, "Stck", "", idx);
+          }
+        });
+      }
       for (const m of raum.material) material.add(m.bezeichnung, m.menge, m.einheit, m.artikelnummer);
     }
   }
@@ -1352,30 +1878,19 @@ function bauGesamtZeilen(b) {
   }
 
   const zeilen = [];
-  if (schaltungen.size) {
-    zeilen.push({ gruppe: "Beleuchtung – Schaltungen" });
-    const rang = (bez) => BAU_SCHALTUNGSTYPEN.findIndex((t) => bez.startsWith(t.b + " ") || bez === t.b);
-    const sortiert = [...schaltungen.entries()].sort((x, y) => rang(x[0]) - rang(y[0]) || x[0].localeCompare(y[0], "de"));
-    for (const [bez, n] of sortiert) zeilen.push({ b: bez, menge: n, e: "Stck" });
-  }
-  if (melder.size) zeilen.push({ gruppe: "Beleuchtung – Melder (Handautomatik)" }, ...melder.zeilen());
+  if (schaltungen.size) zeilen.push({ gruppe: "Beleuchtung – Schaltungen" }, ...schaltungen.zeilen());
+  if (melderHA.size) zeilen.push({ gruppe: "Beleuchtung – Melder (Handautomatik)" }, ...melderHA.zeilen());
   const aus = BAU_AUSLAESSE.filter((a) => auslaesse[a.key] > 0);
   if (aus.length) {
     zeilen.push({ gruppe: "Beleuchtung – Auslässe" });
     for (const a of aus) zeilen.push({ b: a.b, menge: auslaesse[a.key], e: "Stck" });
   }
-  if (rolloSumme.rollo) {
-    zeilen.push({ gruppe: "Rollos" });
-    zeilen.push({ b: "Rollo", menge: rolloSumme.rollo, e: "Stck" });
-    if (rolloSumme.schalter) zeilen.push({ b: "Rolloschalter", menge: rolloSumme.schalter, e: "Stck" });
-    if (rolloSumme.taster) zeilen.push({ b: "Rollotaster", menge: rolloSumme.taster, e: "Stck" });
-  }
+  if (rollo.size) zeilen.push({ gruppe: "Rollos" }, ...rollo.zeilen());
   if (knx.size) zeilen.push({ gruppe: "KNX (Räume)" }, ...knx.zeilen());
+  if (melder.size) zeilen.push({ gruppe: "Melder" }, ...melder.zeilen());
   for (const g of BAU_POSITIONEN_GRUPPEN) {
-    const pos = g.positionen.filter((p) => positionen[p.key] > 0);
-    if (!pos.length) continue;
-    zeilen.push({ gruppe: g.titel });
-    for (const p of pos) zeilen.push({ b: p.b, menge: positionen[p.key], e: "Stck" });
+    const sm = gruppen.get(g.id);
+    if (sm.size) zeilen.push({ gruppe: g.titel }, ...sm.zeilen());
   }
   for (const [gruppe, sm] of verteilung) {
     if (sm.size) zeilen.push({ gruppe: "Verteilung – " + gruppe }, ...sm.zeilen());
@@ -1482,7 +1997,7 @@ function erstelleBauPdf(b) {
   let raeumeMitInhalt = 0;
   for (const etage of b.etagen) {
     for (const raum of etage.raeume) {
-      const zeilen = bauRaumZeilen(raum);
+      const zeilen = bauRaumZeilen(b, raum);
       if (!zeilen.length) continue; // Raum ohne Einträge > 0 erscheint nicht
       platzFuerTitel();
       tabelle(`${etage.name} – ${raum.name || "Raum"}`, zeilen);
