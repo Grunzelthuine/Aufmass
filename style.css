@@ -569,3 +569,31 @@ tr.zeile-gepackt .bez-text { text-decoration: line-through; }
 .segment-btn + .segment-btn { border-left: 1px solid var(--color-border); }
 .segment-btn.aktiv { background: var(--color-primary); color: #fff; }
 .rollo-bedien-anzahl:not(:empty) { margin-top: 4px; }
+
+/* v11: Dropdown-Auswahl, Komponenten-Karten */
+.auswahl { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.auswahl-select {
+  font-weight: 600;
+  color: var(--color-primary);
+  background: #fff;
+  border: 1px dashed var(--color-primary-light);
+}
+.etage-karte .auswahl { margin-top: 2px; }
+.segment-feld { margin: 2px 0 6px; }
+.komp-felder { display: flex; flex-direction: column; }
+.komp-select {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid #eef1f5;
+  font-size: 0.92rem;
+  color: var(--color-text);
+  font-weight: 600;
+}
+.komp-select select { width: auto; max-width: 62%; padding: 7px 10px; font-size: 0.92rem; }
+.komp-karte .segment-btn { padding: 8px 2px; font-size: 0.84rem; }
+.melder-typ { margin-top: 2px; margin-bottom: 4px; }
+.komp-aktionen { display: flex; align-items: center; gap: 6px; }
+.komp-kopie { padding: 4px 6px; font-size: 0.8rem; }

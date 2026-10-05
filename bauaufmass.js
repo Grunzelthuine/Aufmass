@@ -1,14 +1,14 @@
 "use strict";
 
 /* ============================================================
-   Bauaufmaß (seit Version 10.0)
-   Alternative zum normalen Materialaufmaß: Kunde + Arbeitsbeschreibung,
-   darunter Etagen -> Räume. Pro Raum vorbereitete Zähler (Steckdosen,
-   Cat, Sat, Rollo, FBH, Melder, Geräteanschlüsse, KNX ...), Beleuchtung
-   als Liste von Schaltungen (mit Schaltstellen + Auslässen) und frei
-   hinzufügbares Material (Katalog/Standardmaterial/Freitext).
+   Bauaufmaß (seit Version 10.0, erweitert in 11.0)
+   Kunde + Arbeitsbeschreibung, Etagen -> Räume, Verteilungen.
+   Pro Raum: Beleuchtung (Schaltungen), Rollos, KNX-Komponenten,
+   Zähler-Gruppen und frei hinzufügbares Material.
+   Verteilungen (v11): Typenbezeichnung + Komponenten (FI, LS, ...).
    Datum = Erstellungsdatum des Bauaufmaßes (kein eigenes Datumsfeld).
-   Export: PDF nach Etage/Raum + Gesamtzusammenstellung, nur Positionen > 0.
+   Export: PDF nach Etage/Raum, Verteilungen, Gesamtzusammenstellung;
+   nur Positionen > 0.
    Wird VOR app.js geladen; nutzt dessen Funktionen erst zur Laufzeit.
    ============================================================ */
 
@@ -26,6 +26,8 @@ const BAU_RAUM_VORSCHLAEGE_WEITERE = [
   "Speisekammer", "Technikraum", "Hobbyraum", "Werkstatt", "Carport", "Balkon",
   "Wintergarten", "Garten", "Eingang außen"
 ];
+
+const BAU_VERTEILUNG_VORSCHLAEGE = ["HV", "UV EG", "UV OG", "UV KG", "UV Garage", "Zählerschrank", "Kleinverteilung"];
 
 const BAU_POSITIONEN_GRUPPEN = [
   { id: "installation", titel: "Installation", immerOffen: true, positionen: [
@@ -49,22 +51,32 @@ const BAU_POSITIONEN_GRUPPEN = [
     { key: "dunstabzug", b: "Anschluss Dunstabzug" },
     { key: "durchlauferhitzer", b: "Anschluss Durchlauferhitzer" }
   ] },
-  { id: "komm", titel: "Kommunikation / KNX", positionen: [
+  { id: "komm", titel: "Kommunikation", positionen: [
     { key: "tae", b: "TAE / Telefon" },
-    { key: "klingel", b: "Klingel / Sprechanlage" },
-    { key: "knxtaster", b: "KNX-Taster" },
-    { key: "rtr", b: "Raumtemperaturregler / -fühler" }
+    { key: "klingel", b: "Klingel / Sprechanlage" }
   ] }
 ];
 
+/* Schaltungsarten.
+   stellenLabel: Beschriftung des Zählers (Standard „Schaltstellen“)
+   ohneStellen: kein Zähler (Handautomatik)
+   melder: Handautomatik mit Präsenz-/Bewegungsmelder */
 const BAU_SCHALTUNGSTYPEN = [
   { key: "aus", b: "Ausschaltung", min: 1 },
+  { key: "serie", b: "Serienschaltung", min: 1 },
   { key: "kontroll", b: "Kontrollschaltung", min: 1 },
   { key: "kontrollwechsel", b: "Kontrollwechselschaltung", min: 2 },
   { key: "dimmer", b: "Dimmer", min: 1 },
   { key: "wechsel", b: "Wechselschaltung", min: 2 },
   { key: "wechseldimmer", b: "Wechselschaltung mit Dimmer", min: 2 },
-  { key: "kreuz", b: "Kreuzschaltung", min: 3 }
+  { key: "kreuz", b: "Kreuzschaltung", min: 3 },
+  { key: "taster", b: "Tasterschaltung", min: 1, stellenLabel: "Anzahl Taster", stellenEinheit: "Taster" },
+  { key: "handauto", b: "Handautomatik-Schalter", min: 1, ohneStellen: true, melder: true }
+];
+
+const BAU_MELDERARTEN = [
+  { key: "praesenz", b: "Präsenzmelder" },
+  { key: "bewegung", b: "Bewegungsmelder" }
 ];
 
 // Rollos (v10.1): je Rollo-Anschluss Bedienung wählbar
@@ -81,10 +93,138 @@ const BAU_AUSLAESSE = [
   { key: "strahler", b: "Strahler" }
 ];
 
+/* ---------- Generische Komponenten (KNX im Raum, Verteilung) ----------
+   Feldtypen: counter {k,l,min,d}, select {k,l,o,d}, segment {k,l,o,d}, text {k,l,ph}
+   l darf eine Funktion (item) => Text sein.
+   bez(item): Bezeichnung im PDF/Gesamt (ohne Typ-Freitext; der wird angehängt)
+   unter(item): eingerückte Unterzeilen [{b, menge, e, bGesamt}]
+   e: Einheit der Hauptzeile (Standard Stck), mengeFeld: Feld für Menge (Standard anzahl) */
+const F_ANZAHL = { k: "anzahl", t: "counter", l: "Anzahl", min: 1, d: 1 };
+const F_TYP = (ph) => ({ k: "typ", t: "text", l: "Typ / Hersteller", ph: ph || "optional" });
+const AMP = (liste) => liste.map((a) => a + " A");
+const QUERSCHNITTE = ["1,5 mm²", "2,5 mm²", "4 mm²", "6 mm²", "10 mm²", "16 mm²", "25 mm²", "35 mm²"];
+const ohneA = (s) => String(s || "").replace(/\s*A$/, "");
+
+const KNX_TYPEN = [
+  { key: "tastsensor", b: "KNX-Tastsensor", felder: [
+    { k: "fach", t: "segment", l: "Fachigkeit", o: ["1-fach", "2-fach", "4-fach", "6-fach", "8-fach"], d: "4-fach" },
+    F_ANZAHL, F_TYP("z. B. MDT Taster Plus") ],
+    bez: (i) => "KNX-Tastsensor" + (i.fach ? " " + i.fach : "") },
+  { key: "glastaster", b: "MDT Glastaster II Smart", felder: [
+    { k: "variante", t: "segment", l: "Ausführung", o: ["mit Temperatursensor", "ohne Temperatursensor"], d: "mit Temperatursensor" },
+    F_ANZAHL, { k: "typ", t: "text", l: "Farbe / Typ", ph: "z. B. schwarz" } ],
+    bez: (i) => "MDT Glastaster II Smart, " + i.variante },
+  { key: "pille", b: "Tasterschnittstelle (Pille)", felder: [
+    { k: "anzahl", t: "counter", l: "Anzahl Pillen", min: 1, d: 1 },
+    { k: "ausfuehrung", t: "segment", l: "Mit", o: ["Taster", "Serientaster"], d: "Taster" },
+    { k: "tasterAnzahl", t: "counter", l: (i) => "Anzahl " + i.ausfuehrung, min: 0, d: 1 },
+    F_TYP("Typ Pille, z. B. MDT BE-04000.02") ],
+    bez: () => "KNX-Tasterschnittstelle (Pille)",
+    unter: (i) => (i.tasterAnzahl > 0 ? [{ b: i.ausfuehrung, menge: i.tasterAnzahl, bGesamt: i.ausfuehrung + " (an Pille)" }] : []) },
+  { key: "praesenz", b: "KNX-Präsenzmelder", felder: [F_ANZAHL, F_TYP()], bez: () => "KNX-Präsenzmelder" },
+  { key: "bewegung", b: "KNX-Bewegungsmelder", felder: [F_ANZAHL, F_TYP()], bez: () => "KNX-Bewegungsmelder" },
+  { key: "rtr", b: "KNX-Raumtemperaturregler", felder: [F_ANZAHL, F_TYP()], bez: () => "KNX-Raumtemperaturregler" }
+];
+
+// Hinweis: Feldnamen "id", "art" (Komponententyp) sind reserviert; "typ" ist der Freitext.
+const VERT_TYPEN = [
+  // Schutzorgane
+  { key: "fi", gruppe: "Schutzorgane", b: "FI-Schutzschalter (RCD)", felder: [
+    { k: "rcd", t: "segment", l: "Typ", o: ["A", "F", "B"], d: "A" },
+    { k: "nennstrom", t: "select", l: "Nennstrom", o: AMP([25, 40, 63, 80, 100]), d: "40 A" },
+    { k: "fehlerstrom", t: "select", l: "Fehlerstrom", o: ["10 mA", "30 mA", "100 mA", "300 mA"], d: "30 mA" },
+    { k: "pole", t: "segment", l: "Polzahl", o: ["2-polig", "4-polig"], d: "4-polig" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `FI-Schutzschalter Typ ${i.rcd} ${i.nennstrom} / ${i.fehlerstrom}, ${i.pole}` },
+  { key: "ls", gruppe: "Schutzorgane", b: "LS-Schalter (Automat)", felder: [
+    { k: "char", t: "segment", l: "Charakteristik", o: ["B", "C", "D"], d: "B" },
+    { k: "nennstrom", t: "select", l: "Nennstrom", o: AMP([2, 4, 6, 10, 13, 16, 20, 25, 32, 40, 50, 63]), d: "16 A" },
+    { k: "pole", t: "segment", l: "Polzahl", o: ["1-polig", "1+N", "3-polig", "3+N"], d: "1-polig" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `LS-Schalter ${i.char}${ohneA(i.nennstrom)}, ${i.pole}` },
+  { key: "fils", gruppe: "Schutzorgane", b: "FI/LS-Kombi (RCBO)", felder: [
+    { k: "rcd", t: "segment", l: "FI-Typ", o: ["A", "F", "B"], d: "A" },
+    { k: "char", t: "segment", l: "Charakteristik", o: ["B", "C"], d: "B" },
+    { k: "nennstrom", t: "select", l: "Nennstrom", o: AMP([6, 10, 13, 16, 20, 25, 32, 40]), d: "16 A" },
+    { k: "fehlerstrom", t: "select", l: "Fehlerstrom", o: ["10 mA", "30 mA", "300 mA"], d: "30 mA" },
+    { k: "pole", t: "segment", l: "Polzahl", o: ["1+N", "3+N"], d: "1+N" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `FI/LS Typ ${i.rcd} ${i.char}${ohneA(i.nennstrom)} / ${i.fehlerstrom}, ${i.pole}` },
+  { key: "afdd", gruppe: "Schutzorgane", b: "Brandschutzschalter (AFDD)", felder: [
+    { k: "char", t: "segment", l: "Charakteristik", o: ["B", "C"], d: "B" },
+    { k: "nennstrom", t: "select", l: "Nennstrom", o: AMP([6, 10, 13, 16, 20]), d: "16 A" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `Brandschutzschalter (AFDD) ${i.char}${ohneA(i.nennstrom)}` },
+  { key: "uess", gruppe: "Schutzorgane", b: "Überspannungsschutz", felder: [
+    { k: "stufe", t: "segment", l: "Typ", o: ["Typ 1+2", "Typ 2", "Typ 3"], d: "Typ 1+2" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `Überspannungsschutz ${i.stufe}` },
+  { key: "hauptschalter", gruppe: "Schutzorgane", b: "Hauptschalter / Lasttrennschalter", felder: [
+    { k: "nennstrom", t: "select", l: "Nennstrom", o: AMP([40, 63, 80, 100, 125]), d: "63 A" },
+    { k: "pole", t: "segment", l: "Polzahl", o: ["3-polig", "4-polig"], d: "3-polig" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `Hauptschalter ${i.nennstrom}, ${i.pole}` },
+  { key: "sls", gruppe: "Schutzorgane", b: "SH-Schalter (SLS)", felder: [
+    { k: "nennstrom", t: "select", l: "Nennstrom", o: AMP([25, 35, 40, 50, 63]), d: "35 A" },
+    { k: "pole", t: "segment", l: "Polzahl", o: ["3-polig", "4-polig"], d: "3-polig" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `SH-Schalter (SLS) E${ohneA(i.nennstrom)}, ${i.pole}` },
+  // Zählerplatz
+  { key: "zaehlerplatz", gruppe: "Zählerplatz", b: "Zählerplatz", felder: [
+    { k: "ausf", t: "segment", l: "Ausführung", o: ["eHZ", "3-Punkt"], d: "eHZ" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `Zählerplatz ${i.ausf}` },
+  { key: "apz", gruppe: "Zählerplatz", b: "APZ-Feld (Zusatzanwendungen)", felder: [F_ANZAHL, F_TYP()], bez: () => "APZ-Feld" },
+  // Geräte
+  { key: "klingeltrafo", gruppe: "Reiheneinbaugeräte", b: "Klingeltrafo", felder: [F_ANZAHL, F_TYP("z. B. 8/12 V, 1 A")], bez: () => "Klingeltrafo" },
+  { key: "netzteil", gruppe: "Reiheneinbaugeräte", b: "Hutschienen-Netzteil", felder: [F_ANZAHL, F_TYP("z. B. 24 V DC, 60 W")], bez: () => "Hutschienen-Netzteil" },
+  { key: "stromstoss", gruppe: "Reiheneinbaugeräte", b: "Stromstoßschalter", felder: [F_ANZAHL, F_TYP()], bez: () => "Stromstoßschalter" },
+  { key: "schuetz", gruppe: "Reiheneinbaugeräte", b: "Installationsschütz", felder: [
+    { k: "nennstrom", t: "select", l: "Nennstrom", o: AMP([20, 25, 40, 63]), d: "25 A" },
+    { k: "kontakte", t: "select", l: "Kontakte", o: ["1 S", "2 S", "3 S", "4 S", "1 S + 1 Ö", "2 S + 2 Ö"], d: "2 S" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `Installationsschütz ${i.nennstrom}, ${i.kontakte}` },
+  { key: "treppenlicht", gruppe: "Reiheneinbaugeräte", b: "Treppenlichtzeitschalter", felder: [F_ANZAHL, F_TYP()], bez: () => "Treppenlichtzeitschalter" },
+  { key: "zeitschaltuhr", gruppe: "Reiheneinbaugeräte", b: "Zeitschaltuhr", felder: [F_ANZAHL, F_TYP()], bez: () => "Zeitschaltuhr" },
+  { key: "regsteckdose", gruppe: "Reiheneinbaugeräte", b: "Steckdose REG (Hutschiene)", felder: [F_ANZAHL, F_TYP()], bez: () => "Steckdose REG" },
+  // KNX
+  { key: "knxsv", gruppe: "KNX", b: "KNX-Spannungsversorgung", felder: [
+    { k: "strom", t: "select", l: "Ausgangsstrom", o: ["160 mA", "320 mA", "640 mA", "960 mA", "1280 mA"], d: "640 mA" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `KNX-Spannungsversorgung ${i.strom}` },
+  { key: "knxgeraet", gruppe: "KNX", b: "KNX-Gerät (REG)", felder: [
+    { k: "geraet", t: "select", l: "Art", o: ["Schaltaktor", "Dimmaktor", "Jalousieaktor", "Heizungsaktor", "Binäreingang", "IP-Router / Interface", "Linienkoppler", "Logikmodul", "Wetterstation (Auswerteeinheit)", "Sonstiges"], d: "Schaltaktor" },
+    { k: "kanaele", t: "select", l: "Kanäle", o: ["–", "1-fach", "2-fach", "4-fach", "6-fach", "8-fach", "12-fach", "16-fach", "20-fach", "24-fach"], d: "8-fach" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => `KNX-${i.geraet}` + (i.kanaele && i.kanaele !== "–" ? " " + i.kanaele : "") },
+  // Verdrahtung
+  { key: "reihenklemme", gruppe: "Verdrahtung", b: "Reihenklemmen", felder: [
+    { k: "klemme", t: "select", l: "Art", o: ["Durchgangsklemme", "N-Trennklemme", "PE-Klemme", "Etagenklemme", "Sicherungsklemme", "Endplatte", "Endhalter"], d: "Durchgangsklemme" },
+    { k: "qs", t: "select", l: "Querschnitt", o: QUERSCHNITTE, d: "2,5 mm²" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => (i.klemme === "Endplatte" || i.klemme === "Endhalter") ? i.klemme : `${i.klemme} ${i.qs}` },
+  { key: "schiene", gruppe: "Verdrahtung", b: "Verdrahtungsschiene / Phasenschiene", felder: [
+    { k: "pole", t: "segment", l: "Polzahl", o: ["1-polig", "1+N", "3-polig", "3+N"], d: "3-polig" },
+    { k: "qs", t: "segment", l: "Querschnitt", o: ["10 mm²", "16 mm²"], d: "10 mm²" },
+    F_ANZAHL, F_TYP("z. B. 12 TE / 1 m, Stift / Gabel") ],
+    bez: (i) => `Verdrahtungsschiene ${i.pole}, ${i.qs}` },
+  { key: "verdrahtung", gruppe: "Verdrahtung", b: "Verdrahtung (Aderleitung)", e: "m", felder: [
+    { k: "qs", t: "select", l: "Querschnitt", o: QUERSCHNITTE, d: "2,5 mm²" },
+    { k: "farbe", t: "select", l: "Farbe", o: ["schwarz", "braun", "grau", "blau", "grün-gelb", "rot", "gemischt"], d: "schwarz" },
+    { k: "anzahl", t: "counter", l: "Länge (m)", min: 1, d: 10 }, F_TYP("z. B. H07V-K") ],
+    bez: (i) => `Verdrahtung ${i.qs}, ${i.farbe}` },
+  { key: "npe", gruppe: "Verdrahtung", b: "N-/PE-Schiene", felder: [
+    { k: "schiene", t: "segment", l: "Art", o: ["N-Schiene", "PE-Schiene"], d: "N-Schiene" },
+    F_ANZAHL, F_TYP() ],
+    bez: (i) => i.schiene },
+  { key: "abdeckung", gruppe: "Verdrahtung", b: "Abdeckstreifen / Blindabdeckung", felder: [F_ANZAHL, F_TYP()], bez: () => "Abdeckstreifen / Blindabdeckung" }
+];
+
 let bauaufmasse = [];
 let currentBauaufmass = null;
-let currentRaum = null;       // { etage, raum } während die Raum-Ansicht offen ist
-let bauScrollPosition = 0;    // Scrollposition der Bauaufmaß-Ansicht beim Öffnen eines Raums
+let currentRaum = null;           // { etage, raum } während die Raum-Ansicht offen ist
+let currentMaterialHalter = null; // Raum oder Verteilung, deren Materialliste gerade angezeigt wird
+let bauScrollPosition = 0;        // Scrollposition der Bauaufmaß-Ansicht beim Öffnen eines Raums
 
 /* ---------- Storage ---------- */
 
@@ -92,7 +232,7 @@ function ladeBauaufmasse() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_BAUAUFMASSE);
     bauaufmasse = raw ? JSON.parse(raw) : [];
-    bauaufmasse.forEach((b) => b.etagen.forEach((e) => e.raeume.forEach(migriereRaum)));
+    bauaufmasse.forEach(migriereBauaufmass);
   } catch (e) {
     console.error("Fehler beim Laden der Bauaufmaße", e);
     bauaufmasse = [];
@@ -111,7 +251,8 @@ function speichereBauaufmasse() {
 function istLeeresBauaufmass(b) {
   const k = b.kunde;
   return !k.name.trim() && !k.ansprechpartner.trim() && !k.strasse.trim() && !k.plzOrt.trim() &&
-    !k.telefon.trim() && !b.baustelle.trim() && !b.arbeitsbeschreibung.trim() && b.etagen.length === 0;
+    !k.telefon.trim() && !b.baustelle.trim() && !b.arbeitsbeschreibung.trim() && b.etagen.length === 0 &&
+    (b.verteilungen || []).length === 0;
 }
 
 function upsertCurrentBauaufmass() {
@@ -140,24 +281,50 @@ function neuesBauaufmass() {
     kunde: { name: "", ansprechpartner: "", strasse: "", plzOrt: "", telefon: "" },
     baustelle: "",
     arbeitsbeschreibung: "",
-    etagen: [] // { id, name, raeume: [Raum] }
+    etagen: [],       // { id, name, raeume: [Raum] }
+    verteilungen: []  // { id, name, standort, typ, bemerkung, komponenten: [], material: [] }
   };
 }
 
 function neuerRaum(name) {
-  return { id: neueId(), name, positionen: {}, schaltungen: [], rollos: [], material: [] };
+  return { id: neueId(), name, positionen: {}, schaltungen: [], rollos: [], knx: [], material: [] };
+}
+
+function neueVerteilung(name) {
+  return { id: neueId(), name, standort: "", typ: "", bemerkung: "", komponenten: [], material: [] };
 }
 
 function neuesRollo(anzahl = 1, bedienung = "keine") {
   return { id: neueId(), anzahl, bedienung, bedienAnzahl: 1, bemerkung: "" };
 }
 
-// v10.0 hatte "Rollo" als einfachen Zähler – in Rollo-Einträge ohne Bedienung umwandeln.
+function komponentenTyp(typen, key) {
+  return typen.find((t) => t.key === key) || typen[0];
+}
+
+function neueKomponente(typ, werte) {
+  const item = { id: neueId(), art: typ.key, typ: "" };
+  for (const f of typ.felder) if (f.d !== undefined) item[f.k] = f.d;
+  return Object.assign(item, werte || {});
+}
+
+function migriereBauaufmass(b) {
+  if (!Array.isArray(b.verteilungen)) b.verteilungen = [];
+  b.etagen.forEach((e) => e.raeume.forEach(migriereRaum));
+}
+
+// v10.0: "Rollo" als Zähler -> Rollo-Einträge; v10.x: KNX-Taster/RTR als Zähler -> KNX-Komponenten.
 function migriereRaum(raum) {
+  if (!raum.positionen) raum.positionen = {};
   if (!Array.isArray(raum.rollos)) raum.rollos = [];
-  const alt = raum.positionen && raum.positionen.rollo;
-  if (alt > 0) raum.rollos.push(neuesRollo(alt, "keine"));
-  if (raum.positionen) delete raum.positionen.rollo;
+  if (!Array.isArray(raum.knx)) raum.knx = [];
+  const p = raum.positionen;
+  if (p.rollo > 0) raum.rollos.push(neuesRollo(p.rollo, "keine"));
+  delete p.rollo;
+  if (p.knxtaster > 0) raum.knx.push(neueKomponente(komponentenTyp(KNX_TYPEN, "tastsensor"), { anzahl: p.knxtaster, fach: "" }));
+  delete p.knxtaster;
+  if (p.rtr > 0) raum.knx.push(neueKomponente(komponentenTyp(KNX_TYPEN, "rtr"), { anzahl: p.rtr }));
+  delete p.rtr;
 }
 
 function rolloBedienung(key) {
@@ -174,9 +341,20 @@ function schaltungTyp(key) {
   return BAU_SCHALTUNGSTYPEN.find((t) => t.key === key) || BAU_SCHALTUNGSTYPEN[0];
 }
 
+function melderArt(key) {
+  return BAU_MELDERARTEN.find((m) => m.key === key) || BAU_MELDERARTEN[0];
+}
+
 function schaltungBezeichnung(s) {
   const t = schaltungTyp(s.typ);
+  if (t.melder) return `${t.b} mit ${melderArt(s.melderArt).b}`;
+  if (t.stellenEinheit) return `${t.b} (${s.schaltstellen} ${t.stellenEinheit})`;
   return t.b + (s.schaltstellen > 1 ? ` (${s.schaltstellen} Schaltstellen)` : "");
+}
+
+function komponenteMitTyp(bez, item) {
+  const typ = (item.typ || "").trim();
+  return typ ? `${bez} – ${typ}` : bez;
 }
 
 function raumZusammenfassung(raum) {
@@ -185,11 +363,258 @@ function raumZusammenfassung(raum) {
   if (nS) teile.push(`${nS} Schaltung${nS === 1 ? "" : "en"}`);
   const nR = (raum.rollos || []).reduce((s, r) => s + r.anzahl, 0);
   if (nR) teile.push(`${nR} Rollo${nR === 1 ? "" : "s"}`);
+  const nK = (raum.knx || []).reduce((s, k) => s + (k.anzahl || 0), 0);
+  if (nK) teile.push(`${nK} KNX`);
   const nP = Object.values(raum.positionen).reduce((s, v) => s + (v > 0 ? v : 0), 0);
   if (nP) teile.push(`${nP} Anschl./Geräte`);
   const nM = raum.material.filter((m) => m.menge > 0).length;
   if (nM) teile.push(`${nM} Material`);
   return teile.length ? teile.join(" · ") : "noch leer";
+}
+
+function verteilungZusammenfassung(v) {
+  const teile = [];
+  if ((v.typ || "").trim()) teile.push(v.typ.trim());
+  if ((v.standort || "").trim()) teile.push(v.standort.trim());
+  const nK = v.komponenten.length;
+  teile.push(`${nK} Position${nK === 1 ? "" : "en"}`);
+  const nM = v.material.filter((m) => m.menge > 0).length;
+  if (nM) teile.push(`${nM} Material`);
+  return teile.join(" · ");
+}
+
+/* ---------- UI-Bausteine ---------- */
+
+// Dropdown, das beim Auswählen sofort hinzufügt. gruppen: [{label?, optionen:[{value,text,disabled?}]}]
+// frei: Platzhalter für Freitext-Option (oder null). onAdd(value) – bei Freitext der eingegebene Text.
+function baueAuswahl({ platzhalter, gruppen, frei, onAdd }) {
+  const wrap = document.createElement("div");
+  wrap.className = "auswahl";
+  const select = document.createElement("select");
+  select.className = "auswahl-select";
+  const opt0 = document.createElement("option");
+  opt0.value = "";
+  opt0.textContent = platzhalter;
+  select.appendChild(opt0);
+  for (const g of gruppen) {
+    let ziel = select;
+    if (g.label) {
+      ziel = document.createElement("optgroup");
+      ziel.label = g.label;
+      select.appendChild(ziel);
+    }
+    for (const o of g.optionen) {
+      const opt = document.createElement("option");
+      opt.value = o.value;
+      opt.textContent = o.text;
+      opt.disabled = !!o.disabled;
+      ziel.appendChild(opt);
+    }
+  }
+  if (frei) {
+    const opt = document.createElement("option");
+    opt.value = "__frei__";
+    opt.textContent = "✎ " + frei.option;
+    select.appendChild(opt);
+  }
+  wrap.appendChild(select);
+
+  let freiZeile = null;
+  if (frei) {
+    freiZeile = document.createElement("div");
+    freiZeile.className = "inline-add";
+    freiZeile.hidden = true;
+    freiZeile.innerHTML = `<input type="text"><button type="button" class="btn btn-secondary">Hinzufügen</button>`;
+    const input = freiZeile.querySelector("input");
+    input.placeholder = frei.placeholder;
+    const add = () => {
+      const t = input.value.trim();
+      if (!t) { input.focus(); return; }
+      onAdd(t, true);
+    };
+    freiZeile.querySelector("button").addEventListener("click", add);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+    wrap.appendChild(freiZeile);
+  }
+
+  select.addEventListener("change", () => {
+    const v = select.value;
+    if (!v) return;
+    if (v === "__frei__") {
+      freiZeile.hidden = false;
+      freiZeile.querySelector("input").focus();
+      return;
+    }
+    if (freiZeile) freiZeile.hidden = true;
+    select.value = "";
+    onAdd(v, false);
+  });
+  return wrap;
+}
+
+// Zähler-Zeile: Bezeichnung + (−) [Zahl] (+)
+function baueZaehler(label, wert, min, onChange) {
+  const row = document.createElement("div");
+  row.className = "zaehler-zeile" + (wert > 0 ? " aktiv" : "");
+  row.innerHTML = `
+    <span class="zaehler-label"></span>
+    <div class="menge-control">
+      <button type="button" class="btn-qty" data-action="dec" aria-label="weniger">−</button>
+      <input type="number" step="1" min="${min}" inputmode="numeric" class="menge-input">
+      <button type="button" class="btn-qty" data-action="inc" aria-label="mehr">+</button>
+    </div>`;
+  row.querySelector(".zaehler-label").textContent = label;
+  const input = row.querySelector("input");
+  input.value = wert;
+  const setze = (v) => {
+    v = Math.max(min, Math.round(isNaN(v) ? min : v));
+    wert = v;
+    input.value = v;
+    row.classList.toggle("aktiv", v > 0);
+    onChange(v);
+  };
+  row.querySelector('[data-action="dec"]').addEventListener("click", () => setze(wert - 1));
+  row.querySelector('[data-action="inc"]').addEventListener("click", () => setze(wert + 1));
+  input.addEventListener("change", () => setze(parseFloat(input.value)));
+  return row;
+}
+
+// Segment-Auswahl (z. B. Keine / Schalter / Taster)
+function baueSegment(label, optionen, wert, onChange) {
+  const wrap = document.createElement("div");
+  wrap.className = "segment-feld";
+  if (label) {
+    const l = document.createElement("div");
+    l.className = "rollo-bedienung-label";
+    l.textContent = label;
+    wrap.appendChild(l);
+  }
+  const seg = document.createElement("div");
+  seg.className = "segment";
+  seg.setAttribute("role", "radiogroup");
+  for (const o of optionen) {
+    const value = typeof o === "string" ? o : o.key;
+    const text = typeof o === "string" ? o : o.b;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "segment-btn" + (wert === value ? " aktiv" : "");
+    btn.setAttribute("role", "radio");
+    btn.setAttribute("aria-checked", wert === value ? "true" : "false");
+    btn.textContent = text;
+    btn.addEventListener("click", () => {
+      seg.querySelectorAll(".segment-btn").forEach((x) => {
+        x.classList.toggle("aktiv", x === btn);
+        x.setAttribute("aria-checked", x === btn ? "true" : "false");
+      });
+      onChange(value);
+    });
+    seg.appendChild(btn);
+  }
+  wrap.appendChild(seg);
+  return wrap;
+}
+
+function baueSelectFeld(label, optionen, wert, onChange) {
+  const l = document.createElement("label");
+  l.className = "komp-select";
+  l.textContent = label;
+  const sel = document.createElement("select");
+  for (const o of optionen) {
+    const opt = document.createElement("option");
+    opt.value = o;
+    opt.textContent = o;
+    sel.appendChild(opt);
+  }
+  if (!optionen.includes(wert)) {
+    const opt = document.createElement("option");
+    opt.value = wert;
+    opt.textContent = wert || "–";
+    sel.insertBefore(opt, sel.firstChild);
+  }
+  sel.value = wert;
+  sel.addEventListener("change", () => onChange(sel.value));
+  l.appendChild(sel);
+  return l;
+}
+
+function baueTextFeld(placeholder, wert, onChange, label) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "schaltung-bemerkung";
+  input.placeholder = label ? `${label} (${placeholder})` : placeholder;
+  input.value = wert || "";
+  input.addEventListener("input", () => onChange(input.value));
+  return input;
+}
+
+/* Rendert eine Liste generischer Komponenten (KNX im Raum, Komponenten einer Verteilung)
+   als Karten. liste wird direkt mutiert; nach Änderungen autosave() + onChange(). */
+function renderKomponentenListe(container, halter, feld, typen, onChange) {
+  container.innerHTML = "";
+  const liste = halter[feld];
+  liste.forEach((item, i) => {
+    const typ = komponentenTyp(typen, item.art);
+    const karte = document.createElement("div");
+    karte.className = "schaltung-karte komp-karte";
+    karte.innerHTML = `
+      <div class="schaltung-kopf">
+        <strong></strong>
+        <span class="komp-aktionen">
+          <button type="button" class="btn-link-accent komp-kopie" aria-label="Duplizieren">⧉ Kopie</button>
+          <button type="button" class="btn-danger-text" aria-label="Entfernen">✕</button>
+        </span>
+      </div>
+      <div class="komp-felder"></div>`;
+    karte.querySelector("strong").textContent = `${i + 1}. ${typ.b}`;
+    karte.querySelector(".btn-danger-text").addEventListener("click", () => {
+      if (!confirm(`${typ.b} entfernen?`)) return;
+      halter[feld] = halter[feld].filter((x) => x.id !== item.id);
+      autosave();
+      renderKomponentenListe(container, halter, feld, typen, onChange);
+      onChange();
+    });
+    karte.querySelector(".komp-kopie").addEventListener("click", () => {
+      const kopie = Object.assign(JSON.parse(JSON.stringify(item)), { id: neueId() });
+      halter[feld].splice(halter[feld].indexOf(item) + 1, 0, kopie);
+      autosave();
+      renderKomponentenListe(container, halter, feld, typen, onChange);
+      onChange();
+    });
+    const felderEl = karte.querySelector(".komp-felder");
+    const neuZeichnen = () => {
+      renderKomponentenListe(container, halter, feld, typen, onChange);
+      onChange();
+    };
+    for (const f of typ.felder) {
+      const label = typeof f.l === "function" ? f.l(item) : f.l;
+      if (f.t === "counter") {
+        felderEl.appendChild(baueZaehler(label, item[f.k] ?? f.d ?? 0, f.min ?? 0, (v) => { item[f.k] = v; autosave(); onChange(); }));
+      } else if (f.t === "segment") {
+        felderEl.appendChild(baueSegment(label, f.o, item[f.k], (v) => { item[f.k] = v; autosave(); neuZeichnen(); }));
+      } else if (f.t === "select") {
+        felderEl.appendChild(baueSelectFeld(label, f.o, item[f.k], (v) => { item[f.k] = v; autosave(); onChange(); }));
+      } else if (f.t === "text") {
+        felderEl.appendChild(baueTextFeld(f.ph || "optional", item[f.k], (v) => { item[f.k] = v; autosave(); }, label));
+      }
+    }
+    container.appendChild(karte);
+  });
+}
+
+function komponentenAuswahl(typen, platzhalter, onAdd) {
+  const gruppen = [];
+  for (const t of typen) {
+    const gName = t.gruppe || "";
+    let g = gruppen.find((x) => x.label === gName);
+    if (!g) { g = { label: gName, optionen: [] }; gruppen.push(g); }
+    g.optionen.push({ value: t.key, text: t.b });
+  }
+  return baueAuswahl({ platzhalter, gruppen, frei: null, onAdd: (key) => onAdd(komponentenTyp(typen, key)) });
+}
+
+function scrolleZuLetzter(selector) {
+  const karten = document.querySelectorAll(selector);
+  if (karten.length) karten[karten.length - 1].scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 /* ---------- Übersicht (Bereich in zeigeUebersicht) ---------- */
@@ -206,12 +631,13 @@ function renderBauaufmassUebersicht() {
     const li = document.createElement("li");
     li.className = "aufmass-card";
     const nRaeume = b.etagen.reduce((s, e) => s + e.raeume.length, 0);
+    const nV = (b.verteilungen || []).length;
     const kundeName = b.kunde.name.trim() || "(ohne Kundenname)";
     const beschreibung = b.arbeitsbeschreibung.trim();
     li.innerHTML = `
       <div class="info">
         <p class="kunde">${escapeHtml(kundeName)}</p>
-        <p class="meta">${formatDatumDE(erstelltDatumISO(b))} · ${b.etagen.length} Etage${b.etagen.length === 1 ? "" : "n"}, ${nRaeume} Raum${nRaeume === 1 ? "" : "e"}${beschreibung ? " · " + escapeHtml(beschreibung) : ""}</p>
+        <p class="meta">${formatDatumDE(erstelltDatumISO(b))} · ${b.etagen.length} Etage${b.etagen.length === 1 ? "" : "n"}, ${nRaeume} Raum${nRaeume === 1 ? "" : "e"}${nV ? `, ${nV} Verteilung${nV === 1 ? "" : "en"}` : ""}${beschreibung ? " · " + escapeHtml(beschreibung) : ""}</p>
       </div>
       <span class="chevron">›</span>`;
     li.addEventListener("click", () => oeffneBauaufmass(b));
@@ -222,8 +648,10 @@ function renderBauaufmassUebersicht() {
 /* ---------- Bauaufmaß-Ansicht ---------- */
 
 function oeffneBauaufmass(b, scrollY) {
+  migriereBauaufmass(b);
   currentBauaufmass = b;
   currentRaum = null;
+  currentMaterialHalter = null;
   currentAufmass = null;
   currentPackliste = null;
   zurueckAktion = null;
@@ -252,28 +680,16 @@ function oeffneBauaufmass(b, scrollY) {
   document.getElementById("b_datumHinweis").textContent =
     `Datum im Export: ${formatDatumDE(erstelltDatumISO(b))} (Erstellungsdatum)`;
 
-  // Etage hinzufügen
-  const chipsEl = document.getElementById("b_etagenChips");
-  for (const name of BAU_ETAGEN_VORGABEN) {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "chip";
-    chip.textContent = name;
-    chip.disabled = b.etagen.some((e) => e.name === name);
-    chip.addEventListener("click", () => fuegeEtageHinzu(name));
-    chipsEl.appendChild(chip);
-  }
-  const etageFrei = document.getElementById("b_etageFrei");
-  const etageFreiBtn = document.getElementById("b_etageFreiBtn");
-  const etageFreiAdd = () => {
-    const name = etageFrei.value.trim();
-    if (!name) { etageFrei.focus(); return; }
-    fuegeEtageHinzu(name);
-  };
-  etageFreiBtn.addEventListener("click", etageFreiAdd);
-  etageFrei.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); etageFreiAdd(); } });
+  // Etage hinzufügen (Dropdown)
+  document.getElementById("b_etageAuswahl").appendChild(baueAuswahl({
+    platzhalter: "＋ Etage hinzufügen…",
+    gruppen: [{ optionen: BAU_ETAGEN_VORGABEN.map((n) => ({ value: n, text: n, disabled: b.etagen.some((e) => e.name === n) })) }],
+    frei: { option: "Eigene Etage…", placeholder: "z. B. Anbau, Zwischengeschoss" },
+    onAdd: (name) => fuegeEtageHinzu(name)
+  }));
 
   renderEtagen();
+  renderVerteilungenListe();
 
   const bestehend = bauaufmasse.some((x) => x.id === b.id);
   const btnLoeschen = document.getElementById("btnBauLoeschen");
@@ -317,10 +733,7 @@ function fuegeEtageHinzu(name) {
   autosave();
   oeffneBauaufmass(b, window.scrollY);
   const karte = document.querySelector(`[data-etage-id="${etage.id}"]`);
-  if (karte) {
-    karte.querySelector(".raum-add-panel").hidden = false;
-    karte.scrollIntoView({ block: "start", behavior: "smooth" });
-  }
+  if (karte) karte.scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
 function eindeutigerRaumname(etage, name) {
@@ -361,16 +774,7 @@ function renderEtagen() {
         </div>
       </div>
       <ul class="raum-liste"></ul>
-      <button type="button" class="btn-link-accent raum-add-toggle">+ Raum hinzufügen</button>
-      <div class="raum-add-panel" hidden>
-        <div class="chip-row raum-chips"></div>
-        <div class="kategorie-titel-klein">Weitere Vorschläge</div>
-        <div class="chip-row raum-chips-weitere"></div>
-        <div class="inline-add">
-          <input type="text" class="raum-frei" placeholder="Eigener Raumname">
-          <button type="button" class="btn btn-secondary raum-frei-btn">Hinzufügen</button>
-        </div>
-      </div>`;
+      <div class="raum-add"></div>`;
     karte.querySelector(".etage-name").textContent = etage.name;
 
     karte.querySelector('[data-a="hoch"]').addEventListener("click", () => verschiebeEtage(etageIdx, -1));
@@ -408,37 +812,23 @@ function renderEtagen() {
       raumListe.appendChild(li);
     }
 
-    const panel = karte.querySelector(".raum-add-panel");
-    karte.querySelector(".raum-add-toggle").addEventListener("click", () => { panel.hidden = !panel.hidden; });
-
-    const fuegeRaumHinzu = (name) => {
-      etage.raeume.push(neuerRaum(eindeutigerRaumname(etage, name)));
-      autosave();
-      oeffneBauaufmass(b, window.scrollY);
-      const k = document.querySelector(`[data-etage-id="${etage.id}"]`);
-      if (k) k.querySelector(".raum-add-panel").hidden = false; // für mehrere Räume am Stück offen lassen
+    const opt = (name) => {
+      const benutzt = etage.raeume.some((r) => r.name === name);
+      return { value: name, text: benutzt ? `${name} ✓` : name };
     };
-    const baueChips = (ziel, namen) => {
-      for (const name of namen) {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "chip";
-        if (etage.raeume.some((r) => r.name === name)) chip.classList.add("chip-benutzt");
-        chip.textContent = name;
-        chip.addEventListener("click", () => fuegeRaumHinzu(name));
-        ziel.appendChild(chip);
+    karte.querySelector(".raum-add").appendChild(baueAuswahl({
+      platzhalter: "＋ Raum hinzufügen…",
+      gruppen: [
+        { label: "Räume", optionen: BAU_RAUM_VORSCHLAEGE.map(opt) },
+        { label: "Weitere Vorschläge", optionen: BAU_RAUM_VORSCHLAEGE_WEITERE.map(opt) }
+      ],
+      frei: { option: "Eigener Raumname…", placeholder: "Eigener Raumname" },
+      onAdd: (name) => {
+        etage.raeume.push(neuerRaum(eindeutigerRaumname(etage, name)));
+        autosave();
+        oeffneBauaufmass(b, window.scrollY);
       }
-    };
-    baueChips(karte.querySelector(".raum-chips"), BAU_RAUM_VORSCHLAEGE);
-    baueChips(karte.querySelector(".raum-chips-weitere"), BAU_RAUM_VORSCHLAEGE_WEITERE);
-    const frei = karte.querySelector(".raum-frei");
-    const freiAdd = () => {
-      const name = frei.value.trim();
-      if (!name) { frei.focus(); return; }
-      fuegeRaumHinzu(name);
-    };
-    karte.querySelector(".raum-frei-btn").addEventListener("click", freiAdd);
-    frei.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); freiAdd(); } });
+    }));
 
     container.appendChild(karte);
   });
@@ -453,38 +843,44 @@ function verschiebeEtage(idx, richtung) {
   oeffneBauaufmass(b, window.scrollY);
 }
 
-/* ---------- Raum-Ansicht ---------- */
+/* ---------- Verteilungen (Liste im Bauaufmaß) ---------- */
 
-// Zähler-Zeile: Bezeichnung + (−) [Zahl] (+)
-function baueZaehler(label, wert, min, onChange) {
-  const row = document.createElement("div");
-  row.className = "zaehler-zeile" + (wert > 0 ? " aktiv" : "");
-  row.innerHTML = `
-    <span class="zaehler-label"></span>
-    <div class="menge-control">
-      <button type="button" class="btn-qty" data-action="dec" aria-label="weniger">−</button>
-      <input type="number" step="1" min="${min}" inputmode="numeric" class="menge-input">
-      <button type="button" class="btn-qty" data-action="inc" aria-label="mehr">+</button>
-    </div>`;
-  row.querySelector(".zaehler-label").textContent = label;
-  const input = row.querySelector("input");
-  input.value = wert;
-  const setze = (v) => {
-    v = Math.max(min, Math.round(isNaN(v) ? min : v));
-    wert = v;
-    input.value = v;
-    row.classList.toggle("aktiv", v > 0);
-    onChange(v);
-  };
-  row.querySelector('[data-action="dec"]').addEventListener("click", () => setze(wert - 1));
-  row.querySelector('[data-action="inc"]').addEventListener("click", () => setze(wert + 1));
-  input.addEventListener("change", () => setze(parseFloat(input.value)));
-  return row;
+function renderVerteilungenListe() {
+  const b = currentBauaufmass;
+  const listeEl = document.getElementById("b_verteilungen");
+  document.getElementById("b_verteilungenLeer").hidden = b.verteilungen.length !== 0;
+  listeEl.innerHTML = "";
+  for (const v of b.verteilungen) {
+    const li = document.createElement("li");
+    li.className = "raum-karte";
+    li.innerHTML = `<div class="info"><p class="kunde"></p><p class="meta"></p></div><span class="chevron">›</span>`;
+    li.querySelector(".kunde").textContent = v.name || "Verteilung";
+    li.querySelector(".meta").textContent = verteilungZusammenfassung(v);
+    li.addEventListener("click", () => oeffneVerteilung(v));
+    listeEl.appendChild(li);
+  }
+  document.getElementById("b_verteilungAuswahl").appendChild(baueAuswahl({
+    platzhalter: "＋ Verteilung hinzufügen…",
+    gruppen: [{ optionen: BAU_VERTEILUNG_VORSCHLAEGE.map((n) => ({ value: n, text: n })) }],
+    frei: { option: "Eigene Bezeichnung…", placeholder: "z. B. UV Werkstatt" },
+    onAdd: (name) => {
+      let n = name, i = 2;
+      while (b.verteilungen.some((v) => v.name === n)) n = `${name} ${i++}`;
+      const v = neueVerteilung(n);
+      b.verteilungen.push(v);
+      autosave();
+      bauScrollPosition = window.scrollY;
+      oeffneVerteilung(v);
+    }
+  }));
 }
+
+/* ---------- Raum-Ansicht ---------- */
 
 function oeffneRaum(etage, raum) {
   bauScrollPosition = window.scrollY;
   currentRaum = { etage, raum };
+  currentMaterialHalter = raum;
   selectedArtikel = null;
   selectedStandardArtikel = null;
   selectedFavoritArtikel = null;
@@ -510,24 +906,22 @@ function oeffneRaum(etage, raum) {
   });
   document.getElementById("r_etage").textContent = etage.name;
 
+  // Beleuchtung
   renderSchaltungen();
-
-  // Schaltung hinzufügen
-  const typenEl = document.getElementById("r_schaltungTypen");
-  for (const t of BAU_SCHALTUNGSTYPEN) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "chip chip-schaltung";
-    btn.textContent = "+ " + t.b;
-    btn.addEventListener("click", () => {
-      raum.schaltungen.push({ id: neueId(), typ: t.key, schaltstellen: t.min, wand: 0, decke: 0, steckdose: 0, strahler: 0, bemerkung: "" });
+  document.getElementById("r_schaltungAuswahl").appendChild(baueAuswahl({
+    platzhalter: "＋ Schaltung hinzufügen…",
+    gruppen: [{ optionen: BAU_SCHALTUNGSTYPEN.map((t) => ({ value: t.key, text: t.b })) }],
+    frei: null,
+    onAdd: (key) => {
+      const t = schaltungTyp(key);
+      const s = { id: neueId(), typ: t.key, schaltstellen: t.min, wand: 0, decke: 0, steckdose: 0, strahler: 0, bemerkung: "" };
+      if (t.melder) Object.assign(s, { melderArt: "praesenz", melderAnzahl: 1, melderTyp: "" });
+      raum.schaltungen.push(s);
       autosave();
       renderSchaltungen();
-      const karten = document.querySelectorAll(".schaltung-karte");
-      if (karten.length) karten[karten.length - 1].scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    typenEl.appendChild(btn);
-  }
+      scrolleZuLetzter(".schaltung-karte.licht-karte");
+    }
+  }));
 
   // Rollos
   renderRollos();
@@ -535,9 +929,27 @@ function oeffneRaum(etage, raum) {
     raum.rollos.push(neuesRollo());
     autosave();
     renderRollos();
-    const karten = document.querySelectorAll(".rollo-karte");
-    if (karten.length) karten[karten.length - 1].scrollIntoView({ block: "center", behavior: "smooth" });
+    scrolleZuLetzter(".rollo-karte");
   });
+
+  // KNX
+  const renderKnx = () => {
+    renderKomponentenListe(document.getElementById("r_knx"), raum, "knx", KNX_TYPEN, aktualisiereKnxTitel);
+    aktualisiereKnxTitel();
+  };
+  const aktualisiereKnxTitel = () => {
+    document.getElementById("r_anzahlKnx").textContent = raum.knx.reduce((s, k) => s + (k.anzahl || 0), 0);
+    document.getElementById("r_knxLeer").hidden = raum.knx.length !== 0;
+  };
+  renderKnx();
+  const knxDetails = document.getElementById("r_knxDetails");
+  knxDetails.open = raum.knx.length > 0;
+  document.getElementById("r_knxAuswahl").appendChild(komponentenAuswahl(KNX_TYPEN, "＋ KNX-Komponente hinzufügen…", (typ) => {
+    raum.knx.push(neueKomponente(typ));
+    autosave();
+    renderKnx();
+    scrolleZuLetzter("#r_knx .komp-karte");
+  }));
 
   // Zähler-Gruppen
   const gruppenEl = document.getElementById("r_gruppen");
@@ -577,9 +989,7 @@ function oeffneRaum(etage, raum) {
     const kopie = JSON.parse(JSON.stringify(raum));
     kopie.id = neueId();
     kopie.name = kopieRaumname(etage, raum.name || "Raum");
-    kopie.schaltungen.forEach((s) => (s.id = neueId()));
-    kopie.rollos.forEach((r) => (r.id = neueId()));
-    kopie.material.forEach((m) => (m.id = neueId()));
+    for (const feld of ["schaltungen", "rollos", "knx", "material"]) kopie[feld].forEach((x) => (x.id = neueId()));
     etage.raeume.splice(etage.raeume.indexOf(raum) + 1, 0, kopie);
     autosave();
     oeffneRaum(etage, kopie);
@@ -603,14 +1013,13 @@ function renderSchaltungen() {
   raum.schaltungen.forEach((s, i) => {
     const t = schaltungTyp(s.typ);
     const karte = document.createElement("div");
-    karte.className = "schaltung-karte";
+    karte.className = "schaltung-karte licht-karte";
     karte.innerHTML = `
       <div class="schaltung-kopf">
         <strong>${i + 1}. ${escapeHtml(t.b)}</strong>
         <button type="button" class="btn-danger-text" aria-label="Schaltung entfernen">✕</button>
       </div>
-      <div class="schaltung-zaehler"></div>
-      <input type="text" class="schaltung-bemerkung" placeholder="Bemerkung (optional, z. B. Spiegel, Esstisch)">`;
+      <div class="schaltung-zaehler"></div>`;
     karte.querySelector(".btn-danger-text").addEventListener("click", () => {
       if (!confirm(`${t.b} entfernen?`)) return;
       raum.schaltungen = raum.schaltungen.filter((x) => x.id !== s.id);
@@ -618,15 +1027,27 @@ function renderSchaltungen() {
       renderSchaltungen();
     });
     const zaehler = karte.querySelector(".schaltung-zaehler");
-    const zs = baueZaehler("Schaltstellen", s.schaltstellen, t.min, (v) => { s.schaltstellen = v; autosave(); });
-    zs.classList.add("zaehler-schaltstellen");
-    zaehler.appendChild(zs);
+    if (t.melder) {
+      zaehler.appendChild(baueSegment("Melder", BAU_MELDERARTEN, s.melderArt || "praesenz", (v) => {
+        s.melderArt = v;
+        autosave();
+        const lbl = karte.querySelector(".melder-anzahl .zaehler-label");
+        if (lbl) lbl.textContent = `Anzahl ${melderArt(v).b}`;
+      }));
+      const za = baueZaehler(`Anzahl ${melderArt(s.melderArt).b}`, s.melderAnzahl || 1, 1, (v) => { s.melderAnzahl = v; autosave(); });
+      za.classList.add("melder-anzahl");
+      zaehler.appendChild(za);
+      zaehler.appendChild(baueTextFeld("z. B. Theben theRonda P360", s.melderTyp, (v) => { s.melderTyp = v; autosave(); }, "Typ Melder"));
+      zaehler.lastChild.classList.add("melder-typ");
+    } else {
+      const zs = baueZaehler(t.stellenLabel || "Schaltstellen", s.schaltstellen, t.min, (v) => { s.schaltstellen = v; autosave(); });
+      zs.classList.add("zaehler-schaltstellen");
+      zaehler.appendChild(zs);
+    }
     for (const a of BAU_AUSLAESSE) {
       zaehler.appendChild(baueZaehler(a.b, s[a.key] || 0, 0, (v) => { s[a.key] = v; autosave(); }));
     }
-    const bem = karte.querySelector(".schaltung-bemerkung");
-    bem.value = s.bemerkung || "";
-    bem.addEventListener("input", () => { s.bemerkung = bem.value; autosave(); });
+    karte.appendChild(baueTextFeld("Bemerkung (optional, z. B. Spiegel, Esstisch)", s.bemerkung, (v) => { s.bemerkung = v; autosave(); }));
     liste.appendChild(karte);
   });
 }
@@ -648,10 +1069,8 @@ function renderRollos() {
         <button type="button" class="btn-danger-text" aria-label="Rollo entfernen">✕</button>
       </div>
       <div class="rollo-anzahl"></div>
-      <div class="rollo-bedienung-label">Bedienung vor Ort</div>
-      <div class="segment" role="radiogroup"></div>
-      <div class="rollo-bedien-anzahl"></div>
-      <input type="text" class="schaltung-bemerkung" placeholder="Bemerkung (optional, z. B. Terrassentür, Gruppe Süd)">`;
+      <div class="rollo-seg"></div>
+      <div class="rollo-bedien-anzahl"></div>`;
     karte.querySelector(".btn-danger-text").addEventListener("click", () => {
       if (!confirm("Rollo-Anschluss entfernen?")) return;
       raum.rollos = raum.rollos.filter((x) => x.id !== r.id);
@@ -670,43 +1089,28 @@ function renderRollos() {
       if (bd.key === "keine") return;
       bedienAnzahlEl.appendChild(baueZaehler(`Anzahl ${bd.b}`, r.bedienAnzahl || 1, 1, (v) => { r.bedienAnzahl = v; autosave(); }));
     };
-    const segment = karte.querySelector(".segment");
-    for (const bd of BAU_ROLLO_BEDIENUNG) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "segment-btn" + (r.bedienung === bd.key ? " aktiv" : "");
-      btn.setAttribute("role", "radio");
-      btn.setAttribute("aria-checked", r.bedienung === bd.key ? "true" : "false");
-      btn.textContent = bd.b;
-      btn.addEventListener("click", () => {
-        r.bedienung = bd.key;
-        if (!(r.bedienAnzahl >= 1)) r.bedienAnzahl = 1;
-        segment.querySelectorAll(".segment-btn").forEach((x) => {
-          const an = x === btn;
-          x.classList.toggle("aktiv", an);
-          x.setAttribute("aria-checked", an ? "true" : "false");
-        });
-        zeigeBedienAnzahl();
-        autosave();
-      });
-      segment.appendChild(btn);
-    }
+    karte.querySelector(".rollo-seg").appendChild(baueSegment("Bedienung vor Ort", BAU_ROLLO_BEDIENUNG, r.bedienung, (v) => {
+      r.bedienung = v;
+      if (!(r.bedienAnzahl >= 1)) r.bedienAnzahl = 1;
+      zeigeBedienAnzahl();
+      autosave();
+    }));
     zeigeBedienAnzahl();
-    const bem = karte.querySelector(".schaltung-bemerkung");
-    bem.value = r.bemerkung || "";
-    bem.addEventListener("input", () => { r.bemerkung = bem.value; autosave(); });
+    karte.appendChild(baueTextFeld("Bemerkung (optional, z. B. Terrassentür, Gruppe Süd)", r.bemerkung, (v) => { r.bemerkung = v; autosave(); }));
     liste.appendChild(karte);
   });
 }
 
+// Materialliste des aktuellen Raums bzw. der aktuellen Verteilung (gleiche Element-IDs)
 function renderRaumMaterial() {
-  const { raum } = currentRaum;
+  const halter = currentMaterialHalter;
+  if (!halter) return;
   const tbody = document.getElementById("r_materialTbody");
   const leer = document.getElementById("r_materialLeer");
-  document.getElementById("r_anzahlMaterial").textContent = raum.material.length;
+  document.getElementById("r_anzahlMaterial").textContent = halter.material.length;
   tbody.innerHTML = "";
-  leer.hidden = raum.material.length !== 0;
-  raum.material.forEach((m) => {
+  leer.hidden = halter.material.length !== 0;
+  halter.material.forEach((m) => {
     const tr = document.createElement("tr");
     const tdBez = document.createElement("td");
     const sub = m.artikelnummer ? `<div class="row-sub">Art.-Nr. ${escapeHtml(m.artikelnummer)}</div>` : "";
@@ -720,12 +1124,72 @@ function renderRaumMaterial() {
     tdDel.className = "col-del";
     tdDel.innerHTML = `<button class="btn-danger-text" type="button">✕</button>`;
     tdDel.querySelector("button").addEventListener("click", () => {
-      raum.material = raum.material.filter((x) => x.id !== m.id);
+      halter.material = halter.material.filter((x) => x.id !== m.id);
       renderRaumMaterial();
       autosave();
     });
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
+  });
+}
+
+/* ---------- Verteilung-Ansicht ---------- */
+
+function oeffneVerteilung(v) {
+  const b = currentBauaufmass;
+  currentRaum = null;
+  currentMaterialHalter = v;
+  selectedArtikel = null;
+  selectedStandardArtikel = null;
+  selectedFavoritArtikel = null;
+  zurueckAktion = () => oeffneBauaufmass(b, bauScrollPosition);
+  headerTitle.textContent = `Verteilung · ${v.name || ""}`;
+  btnBack.hidden = false;
+  btnNew.hidden = true;
+
+  const tpl = document.getElementById("tpl-verteilung");
+  app.innerHTML = "";
+  app.appendChild(tpl.content.cloneNode(true));
+  window.scrollTo(0, 0);
+
+  const felder = [["v_name", "name"], ["v_standort", "standort"], ["v_typ", "typ"], ["v_bemerkung", "bemerkung"]];
+  for (const [id, k] of felder) {
+    const el = document.getElementById(id);
+    el.value = v[k] || "";
+    el.addEventListener("input", () => {
+      v[k] = el.value;
+      if (k === "name") headerTitle.textContent = `Verteilung · ${v.name}`;
+      autosave();
+    });
+  }
+
+  const container = document.getElementById("v_komponenten");
+  const aktualisiere = () => {
+    document.getElementById("v_anzahlKomponenten").textContent = v.komponenten.length;
+    document.getElementById("v_komponentenLeer").hidden = v.komponenten.length !== 0;
+  };
+  const render = () => { renderKomponentenListe(container, v, "komponenten", VERT_TYPEN, aktualisiere); aktualisiere(); };
+  render();
+  document.getElementById("v_auswahl").appendChild(komponentenAuswahl(VERT_TYPEN, "＋ Position hinzufügen…", (typ) => {
+    v.komponenten.push(neueKomponente(typ));
+    autosave();
+    render();
+    scrolleZuLetzter("#v_komponenten .komp-karte");
+  }));
+
+  klonMaterialTabs("materialHinzufuegenVerteilung");
+  bindeMaterialAuswahl(v.material, () => {
+    renderRaumMaterial();
+    autosave();
+  });
+  renderRaumMaterial();
+
+  document.getElementById("btnVerteilungFertig").addEventListener("click", () => zurueckAktion());
+  document.getElementById("btnVerteilungLoeschen").addEventListener("click", () => {
+    if (!confirm(`Verteilung „${v.name}“ wirklich löschen?`)) return;
+    b.verteilungen = b.verteilungen.filter((x) => x.id !== v.id);
+    autosave();
+    zurueckAktion();
   });
 }
 
@@ -735,14 +1199,43 @@ function zahlDE(n) {
   return Number(n).toLocaleString("de-DE");
 }
 
+// Zeilen einer generischen Komponentenliste (KNX / Verteilung).
+// Bei Verteilungen gruppiert nach Typ-Gruppe (Schutzorgane, Zählerplatz, ...).
+function komponentenZeilen(liste, typen, mitGruppen) {
+  const zeilen = [];
+  const sortiert = liste
+    .map((item, idx) => ({ item, idx, t: typen.indexOf(komponentenTyp(typen, item.art)) }))
+    .filter((x) => x.item.anzahl > 0)
+    .sort((a, b) => (mitGruppen ? a.t - b.t : 0) || a.idx - b.idx);
+  let letzteGruppe = null;
+  for (const { item } of sortiert) {
+    const typ = komponentenTyp(typen, item.art);
+    if (mitGruppen && typ.gruppe !== letzteGruppe) {
+      zeilen.push({ gruppe: typ.gruppe });
+      letzteGruppe = typ.gruppe;
+    }
+    const unter = typ.unter ? typ.unter(item) : [];
+    zeilen.push({ b: komponenteMitTyp(typ.bez(item), item), menge: item.anzahl, e: typ.e || "Stck", schaltung: unter.length > 0 });
+    for (const u of unter) zeilen.push({ b: u.b, menge: u.menge, e: u.e || "Stck", unter: true });
+  }
+  return zeilen;
+}
+
+function melderZeile(s) {
+  const typ = (s.melderTyp || "").trim();
+  return melderArt(s.melderArt).b + (typ ? ` – ${typ}` : "");
+}
+
 // Liefert die Tabellenzeilen eines Raums (nur Positionen > 0). Leeres Array = Raum taucht nicht auf.
 function bauRaumZeilen(raum) {
   const zeilen = [];
   if (raum.schaltungen.length) {
     zeilen.push({ gruppe: "Beleuchtung" });
     raum.schaltungen.forEach((s) => {
+      const t = schaltungTyp(s.typ);
       const bem = (s.bemerkung || "").trim();
       zeilen.push({ b: schaltungBezeichnung(s) + (bem ? ` – ${bem}` : ""), menge: 1, e: "Stck", schaltung: true });
+      if (t.melder && s.melderAnzahl > 0) zeilen.push({ b: melderZeile(s), menge: s.melderAnzahl, e: "Stck", unter: true });
       for (const a of BAU_AUSLAESSE) {
         if (s[a.key] > 0) zeilen.push({ b: a.b, menge: s[a.key], e: "Stck", unter: true });
       }
@@ -759,6 +1252,8 @@ function bauRaumZeilen(raum) {
       if (bd.mat && r.bedienAnzahl > 0) zeilen.push({ b: bd.mat, menge: r.bedienAnzahl, e: "Stck", unter: true });
     });
   }
+  const knx = komponentenZeilen(raum.knx || [], KNX_TYPEN, false);
+  if (knx.length) zeilen.push({ gruppe: "KNX" }, ...knx);
   for (const g of BAU_POSITIONEN_GRUPPEN) {
     const pos = g.positionen.filter((p) => raum.positionen[p.key] > 0);
     if (!pos.length) continue;
@@ -773,17 +1268,69 @@ function bauRaumZeilen(raum) {
   return zeilen;
 }
 
+function bauVerteilungZeilen(v) {
+  const zeilen = [];
+  const bem = (v.bemerkung || "").trim();
+  if (bem) zeilen.push({ gruppe: "Bemerkung: " + bem, info: true });
+  zeilen.push(...komponentenZeilen(v.komponenten, VERT_TYPEN, true));
+  const mat = v.material.filter((m) => m.menge > 0);
+  if (mat.length) {
+    zeilen.push({ gruppe: "Material" });
+    for (const m of mat) zeilen.push({ b: m.bezeichnung, nr: m.artikelnummer || "", menge: m.menge, e: m.einheit });
+  }
+  return zeilen;
+}
+
+function verteilungTitel(v) {
+  const teile = [`Verteilung ${v.name || ""}`.trim()];
+  if ((v.standort || "").trim()) teile[0] += ` (${v.standort.trim()})`;
+  if ((v.typ || "").trim()) teile.push(v.typ.trim());
+  return teile.join(" – ").replace(/mm²/g, "qmm");
+}
+
+// Summiert Zeilen gleicher Bezeichnung/Einheit (Reihenfolge des ersten Auftretens)
+function summenMap() {
+  const map = new Map();
+  return {
+    add(b, menge, e, nr) {
+      if (!(menge > 0)) return;
+      const key = (nr || "") + "|" + b + "|" + e;
+      const v = map.get(key);
+      if (v) v.menge = rundeMenge(v.menge + menge);
+      else map.set(key, { b, nr: nr || "", menge, e });
+    },
+    zeilen() { return [...map.values()]; },
+    get size() { return map.size; }
+  };
+}
+
 function bauGesamtZeilen(b) {
   const schaltungen = new Map();
+  const melder = summenMap();
   const auslaesse = {};
   const positionen = {};
   const rolloSumme = { rollo: 0, schalter: 0, taster: 0 };
-  const material = new Map();
+  const knx = summenMap();
+  const material = summenMap();
+  const verteilung = new Map(); // gruppe -> summenMap
+
+  const sammleKomponenten = (liste, typen, ziel) => {
+    const sortiert = [...liste].sort((x, y) => typen.indexOf(komponentenTyp(typen, x.art)) - typen.indexOf(komponentenTyp(typen, y.art)));
+    for (const item of sortiert) {
+      if (!(item.anzahl > 0)) continue;
+      const typ = komponentenTyp(typen, item.art);
+      const z = ziel(typ);
+      z.add(komponenteMitTyp(typ.bez(item), item), item.anzahl, typ.e || "Stck");
+      for (const u of typ.unter ? typ.unter(item) : []) z.add(u.bGesamt || u.b, u.menge, u.e || "Stck");
+    }
+  };
+
   for (const etage of b.etagen) {
     for (const raum of etage.raeume) {
       for (const s of raum.schaltungen) {
         const key = schaltungBezeichnung(s);
         schaltungen.set(key, (schaltungen.get(key) || 0) + 1);
+        if (schaltungTyp(s.typ).melder) melder.add(melderZeile(s), s.melderAnzahl || 0, "Stck");
         for (const a of BAU_AUSLAESSE) if (s[a.key] > 0) auslaesse[a.key] = (auslaesse[a.key] || 0) + s[a.key];
       }
       for (const r of raum.rollos || []) {
@@ -791,27 +1338,27 @@ function bauGesamtZeilen(b) {
         rolloSumme.rollo += r.anzahl;
         if (r.bedienung === "schalter" || r.bedienung === "taster") rolloSumme[r.bedienung] += r.bedienAnzahl || 0;
       }
+      sammleKomponenten(raum.knx || [], KNX_TYPEN, () => knx);
       for (const [k, v] of Object.entries(raum.positionen)) if (v > 0) positionen[k] = (positionen[k] || 0) + v;
-      for (const m of raum.material) {
-        if (!(m.menge > 0)) continue;
-        const key = (m.artikelnummer || "") + "|" + m.bezeichnung + "|" + m.einheit;
-        const vorhanden = material.get(key);
-        if (vorhanden) vorhanden.menge = rundeMenge(vorhanden.menge + m.menge);
-        else material.set(key, { b: m.bezeichnung, nr: m.artikelnummer || "", menge: m.menge, e: m.einheit });
-      }
+      for (const m of raum.material) material.add(m.bezeichnung, m.menge, m.einheit, m.artikelnummer);
     }
   }
+  for (const v of b.verteilungen || []) {
+    sammleKomponenten(v.komponenten, VERT_TYPEN, (typ) => {
+      if (!verteilung.has(typ.gruppe)) verteilung.set(typ.gruppe, summenMap());
+      return verteilung.get(typ.gruppe);
+    });
+    for (const m of v.material) material.add(m.bezeichnung, m.menge, m.einheit, m.artikelnummer);
+  }
+
   const zeilen = [];
   if (schaltungen.size) {
     zeilen.push({ gruppe: "Beleuchtung – Schaltungen" });
-    // Reihenfolge wie die Schaltungstypen
-    const sortiert = [...schaltungen.entries()].sort((x, y) => {
-      const rx = BAU_SCHALTUNGSTYPEN.findIndex((t) => x[0].startsWith(t.b + " ") || x[0] === t.b);
-      const ry = BAU_SCHALTUNGSTYPEN.findIndex((t) => y[0].startsWith(t.b + " ") || y[0] === t.b);
-      return rx - ry || x[0].localeCompare(y[0], "de");
-    });
+    const rang = (bez) => BAU_SCHALTUNGSTYPEN.findIndex((t) => bez.startsWith(t.b + " ") || bez === t.b);
+    const sortiert = [...schaltungen.entries()].sort((x, y) => rang(x[0]) - rang(y[0]) || x[0].localeCompare(y[0], "de"));
     for (const [bez, n] of sortiert) zeilen.push({ b: bez, menge: n, e: "Stck" });
   }
+  if (melder.size) zeilen.push({ gruppe: "Beleuchtung – Melder (Handautomatik)" }, ...melder.zeilen());
   const aus = BAU_AUSLAESSE.filter((a) => auslaesse[a.key] > 0);
   if (aus.length) {
     zeilen.push({ gruppe: "Beleuchtung – Auslässe" });
@@ -823,25 +1370,31 @@ function bauGesamtZeilen(b) {
     if (rolloSumme.schalter) zeilen.push({ b: "Rolloschalter", menge: rolloSumme.schalter, e: "Stck" });
     if (rolloSumme.taster) zeilen.push({ b: "Rollotaster", menge: rolloSumme.taster, e: "Stck" });
   }
+  if (knx.size) zeilen.push({ gruppe: "KNX (Räume)" }, ...knx.zeilen());
   for (const g of BAU_POSITIONEN_GRUPPEN) {
     const pos = g.positionen.filter((p) => positionen[p.key] > 0);
     if (!pos.length) continue;
     zeilen.push({ gruppe: g.titel });
     for (const p of pos) zeilen.push({ b: p.b, menge: positionen[p.key], e: "Stck" });
   }
-  if (material.size) {
-    zeilen.push({ gruppe: "Material" });
-    for (const m of material.values()) zeilen.push(m);
+  for (const [gruppe, sm] of verteilung) {
+    if (sm.size) zeilen.push({ gruppe: "Verteilung – " + gruppe }, ...sm.zeilen());
   }
+  if (material.size) zeilen.push({ gruppe: "Material" }, ...material.zeilen());
   return zeilen;
 }
 
 function zeilenZuAutoTable(zeilen) {
   return zeilen.map((z) => {
     if (z.gruppe) {
-      return [{ content: z.gruppe, colSpan: 4, styles: { fontStyle: "bold", fillColor: [238, 241, 246], textColor: [60, 70, 85], fontSize: 8.5 } }];
+      const styles = z.info
+        ? { fontStyle: "italic", fillColor: [255, 255, 255], textColor: [80, 90, 105], fontSize: 8.5 }
+        : { fontStyle: "bold", fillColor: [238, 241, 246], textColor: [60, 70, 85], fontSize: 8.5 };
+      return [{ content: String(z.gruppe).replace(/mm²/g, "qmm"), colSpan: 4, styles }];
     }
-    const bez = z.unter ? "      " + z.b : z.b;
+    // Standardschrift des PDFs kennt kein „²“ -> „qmm“
+    const text = String(z.b).replace(/mm²/g, "qmm").replace(/²/g, "2");
+    const bez = z.unter ? "      " + text : text;
     const style = z.schaltung ? { fontStyle: "bold" } : {};
     return [
       { content: bez, styles: style },
@@ -924,17 +1477,26 @@ function erstelleBauPdf(b) {
     });
     y = doc.lastAutoTable.finalY + 6;
   };
+  const platzFuerTitel = () => { if (y > 297 - 40) { doc.addPage(); y = 18; } };
 
   let raeumeMitInhalt = 0;
   for (const etage of b.etagen) {
     for (const raum of etage.raeume) {
       const zeilen = bauRaumZeilen(raum);
       if (!zeilen.length) continue; // Raum ohne Einträge > 0 erscheint nicht
-      // Raumtitel nicht allein am Seitenende stehen lassen
-      if (y > 297 - 40) { doc.addPage(); y = 18; }
+      platzFuerTitel();
       tabelle(`${etage.name} – ${raum.name || "Raum"}`, zeilen);
       raeumeMitInhalt++;
     }
+  }
+
+  let verteilungenMitInhalt = 0;
+  for (const v of b.verteilungen || []) {
+    const zeilen = bauVerteilungZeilen(v);
+    if (!zeilen.length && !(v.typ || "").trim()) continue;
+    platzFuerTitel();
+    tabelle(verteilungTitel(v), zeilen);
+    verteilungenMitInhalt++;
   }
 
   const gesamt = bauGesamtZeilen(b);
@@ -948,11 +1510,12 @@ function erstelleBauPdf(b) {
     y += 4;
     doc.setFontSize(9);
     doc.setTextColor(110);
-    doc.text(`Summe aller Positionen aus ${raeumeMitInhalt} Raum/Räumen`, marginX, y + 4);
+    const vText = verteilungenMitInhalt ? ` und ${verteilungenMitInhalt} Verteilung(en)` : "";
+    doc.text(`Summe aller Positionen aus ${raeumeMitInhalt} Raum/Räumen${vText}`, marginX, y + 4);
     doc.setTextColor(0);
     y += 9;
     tabelle("Gesamt", gesamt);
-  } else {
+  } else if (!raeumeMitInhalt && !verteilungenMitInhalt) {
     doc.setFontSize(10);
     doc.setTextColor(110);
     doc.text("Keine Positionen erfasst.", marginX, y + 4);
