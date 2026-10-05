@@ -114,17 +114,17 @@ const F_PRODUKT = (kat) => ({ k: "typ", t: "produkt", l: "Typ", kat });
    Freitext oder EAN-/Art.-Nr.-Suche im Katalog, danach in den Dropdowns
    wählbar. localStorage aufmass_v1_produkte: [{id, kat, name, nr, ean}] */
 const STORAGE_KEY_PRODUKTE = "aufmass_v1_produkte";
-const PRODUKT_KATEGORIEN = [
-  { key: "abdeckung", b: "Abdeckungen / Schalterprogramme", ph: "z. B. Gira E2 reinweiß glänzend" },
-  { key: "knx_tastsensor", b: "KNX-Tastsensoren", ph: "z. B. MDT Taster Plus 55 4-fach" },
-  { key: "knx_glastaster", b: "MDT Glastaster II Smart", ph: "z. B. BE-GTS2TS.01 schwarz" },
-  { key: "knx_pille", b: "KNX-Tasterschnittstellen (Pille)", ph: "z. B. MDT BE-04000.02" },
-  { key: "knx_praesenz", b: "KNX-Präsenzmelder", ph: "z. B. MDT SCN-P360D3.02" },
-  { key: "knx_bewegung", b: "KNX-Bewegungsmelder", ph: "" },
-  { key: "knx_rtr", b: "KNX-Raumtemperaturregler", ph: "" },
-  { key: "praesenz", b: "Präsenzmelder (konventionell)", ph: "z. B. Theben theRonda P360" },
-  { key: "bewegung", b: "Bewegungsmelder (konventionell)", ph: "z. B. Steinel IS 3360" },
-  { key: "rauchmelder", b: "Rauchmelder", ph: "z. B. Ei Electronics Ei650" }
+const PRODUKT_KATEGORIEN = [ // gruppe: Überschrift in der Produktliste
+  { key: "abdeckung", gruppe: "Abdeckungen", b: "Abdeckungen / Schalterprogramme", ph: "z. B. Gira E2 reinweiß glänzend" },
+  { key: "knx_tastsensor", gruppe: "KNX", b: "KNX-Tastsensoren", ph: "z. B. MDT Taster Plus 55 4-fach" },
+  { key: "knx_glastaster", gruppe: "KNX", b: "MDT Glastaster II Smart", ph: "z. B. BE-GTS2TS.01 schwarz" },
+  { key: "knx_pille", gruppe: "KNX", b: "KNX-Tasterschnittstellen (Pille)", ph: "z. B. MDT BE-04000.02" },
+  { key: "knx_praesenz", gruppe: "KNX", b: "KNX-Präsenzmelder", ph: "z. B. MDT SCN-P360D3.02" },
+  { key: "knx_bewegung", gruppe: "KNX", b: "KNX-Bewegungsmelder", ph: "" },
+  { key: "knx_rtr", gruppe: "KNX", b: "KNX-Raumtemperaturregler", ph: "" },
+  { key: "praesenz", gruppe: "Melder", b: "Präsenzmelder (konventionell)", ph: "z. B. Theben theRonda P360" },
+  { key: "bewegung", gruppe: "Melder", b: "Bewegungsmelder (konventionell)", ph: "z. B. Steinel IS 3360" },
+  { key: "rauchmelder", gruppe: "Melder", b: "Rauchmelder", ph: "z. B. Ei Electronics Ei650" }
 ];
 const AMP = (liste) => liste.map((a) => a + " A");
 const QUERSCHNITTE = ["1,5 mm²", "2,5 mm²", "4 mm²", "6 mm²", "10 mm²", "16 mm²", "25 mm²", "35 mm²"];
@@ -251,6 +251,17 @@ const VERT_TYPEN = [
     bez: (i) => i.schiene },
   { key: "abdeckung", gruppe: "Verdrahtung", b: "Abdeckstreifen / Blindabdeckung", felder: [F_ANZAHL, F_TYP()], bez: () => "Abdeckstreifen / Blindabdeckung" }
 ];
+
+/* v14: Auch für alle Verteilungs-Positionen eine Produkt-Auswahlliste
+   (Kategorie „vert_<key>“). Der bisherige Typ-Freitext wird zum
+   Produkt-Dropdown (Freitext bleibt dort möglich). */
+for (const t of VERT_TYPEN) {
+  const idx = t.felder.findIndex((f) => f.k === "typ");
+  const ph = idx >= 0 ? t.felder[idx].ph : "";
+  const feld = { k: "typ", t: "produkt", l: "Typ / Hersteller", kat: "vert_" + t.key };
+  if (idx >= 0) t.felder[idx] = feld; else t.felder.push(feld);
+  PRODUKT_KATEGORIEN.push({ key: "vert_" + t.key, b: t.b, gruppe: "Verteilung – " + t.gruppe, ph: ph && ph !== "optional" ? ph : "" });
+}
 
 let bauaufmasse = [];
 let currentBauaufmass = null;
@@ -747,11 +758,17 @@ function baueProduktFormular({ kat, onSave, onCancel }) {
       <button type="button" class="btn-danger-text pf-abbrechen">Abbrechen</button>
     </div>`;
   const katSel = form.querySelector(".pf-kat");
+  let og = null;
   for (const k of PRODUKT_KATEGORIEN) {
+    if (!og || og.label !== k.gruppe) {
+      og = document.createElement("optgroup");
+      og.label = k.gruppe || "";
+      katSel.appendChild(og);
+    }
     const o = document.createElement("option");
     o.value = k.key;
     o.textContent = k.b;
-    katSel.appendChild(o);
+    og.appendChild(o);
   }
   if (kat) { katSel.value = kat; form.querySelector(".pf-kat-wrap").hidden = true; }
   const name = form.querySelector(".pf-name");
@@ -903,7 +920,7 @@ function oeffneProduktliste() {
   const view = document.createElement("section");
   view.className = "view";
   view.innerHTML = `
-    <p class="hint" style="padding-top:0">Hier angelegte Produkte stehen im Bauaufmaß als Auswahl bereit (Typ bei KNX-Komponenten und Meldern, Abdeckungen). Anlegen per Freitext oder per EAN-/Art.-Nr.-Suche im Katalog. Gespeichert nur auf diesem Gerät.</p>
+    <p class="hint" style="padding-top:0">Hier angelegte Produkte stehen im Bauaufmaß als Auswahl bereit (Typ bei KNX-Komponenten, Meldern und Verteilungs-Positionen, Abdeckungen). Anlegen per Freitext oder per EAN-/Art.-Nr.-Suche im Katalog. Gespeichert nur auf diesem Gerät.</p>
     <div class="pl-neu"></div>
     <div class="pl-liste view"></div>`;
   app.appendChild(view);
@@ -923,7 +940,15 @@ function oeffneProduktliste() {
   const renderListe = () => {
     const liste = view.querySelector(".pl-liste");
     liste.innerHTML = "";
+    let letzteGruppe = null;
     for (const k of PRODUKT_KATEGORIEN) {
+      if (k.gruppe !== letzteGruppe) {
+        letzteGruppe = k.gruppe;
+        const h = document.createElement("h3");
+        h.className = "pl-gruppe";
+        h.textContent = k.gruppe || "";
+        liste.appendChild(h);
+      }
       const eintraege = produkteDerKategorie(k.key);
       const det = document.createElement("details");
       det.className = "section-card";
@@ -1017,7 +1042,7 @@ function renderBauaufmassUebersicht() {
   btn.addEventListener("click", () => oeffneBauaufmass(neuesBauaufmass()));
   const plBtn = document.getElementById("btnProduktliste");
   if (plBtn) {
-    plBtn.textContent = `⚙ Produktliste (Abdeckungen, KNX, Melder) · ${produkte.length}`;
+    plBtn.textContent = `⚙ Produktliste (Abdeckungen, KNX, Melder, Verteilung) · ${produkte.length}`;
     plBtn.addEventListener("click", oeffneProduktliste);
   }
   const listeEl = document.getElementById("bauaufmassListe");
