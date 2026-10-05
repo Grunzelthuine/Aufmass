@@ -658,6 +658,7 @@ function zeigeUebersicht() {
   }
 
   renderBauaufmassUebersicht();
+  if (typeof renderCloudStatus === "function") renderCloudStatus();
 
   document.getElementById("btnNewPackliste").addEventListener("click", () => oeffnePackliste(neuePackliste()));
 

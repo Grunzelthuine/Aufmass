@@ -1,6 +1,6 @@
 // Service Worker für Material-Aufmaß App
 // Versionsnummer bei jedem Deploy mit Inhaltsänderungen erhöhen, damit Nutzer die neue Version bekommen.
-const CACHE_VERSION = "aufmass-v12";
+const CACHE_VERSION = "aufmass-v13";
 // Eigener Cache für den großen DATANORM-Katalog (~125 MB). Wird bei
 // App-Updates NICHT gelöscht, damit nicht bei jeder neuen App-Version der
 // komplette Katalog erneut heruntergeladen werden muss. Die Chunk-URLs
@@ -12,6 +12,11 @@ const CORE_ASSETS = [
   "./style.css",
   "./app.js",
   "./bauaufmass.js",
+  "./cloudsync.js",
+  "./firebase-config.js",
+  "./vendor/firebase-app-compat.js",
+  "./vendor/firebase-auth-compat.js",
+  "./vendor/firebase-firestore-compat.js",
   "./manifest.json",
   "./standardmaterial.json",
   "./vendor/jspdf.umd.min.js",
@@ -57,6 +62,25 @@ self.addEventListener("message", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
+  // Fremde Adressen (Firebase/Google-Server für Anmeldung + Cloud-Sync) nie über den Cache
+  if (url.origin !== self.location.origin) return;
+
+  // Firebase-Konfiguration: Netzwerk zuerst, damit eine nachträglich eingetragene
+  // Konfiguration ohne neue CACHE_VERSION ankommt; offline aus dem Cache.
+  if (url.pathname.endsWith("/firebase-config.js")) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_VERSION).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
 
   // Katalog-Chunks: Cache-first im eigenen Katalog-Cache
   if (url.pathname.includes("/materials-chunks/materials-chunk-")) {

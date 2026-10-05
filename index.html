@@ -51,6 +51,7 @@
 <!-- Vorlage: Übersicht -->
 <template id="tpl-uebersicht">
   <section class="view">
+    <button type="button" id="cloudStatus" class="cloud-status aus">☁ Cloud-Sync</button>
     <div class="section-heading-row">
       <h2>Aufmaße</h2>
     </div>
@@ -527,7 +528,12 @@
 <script src="vendor/jspdf.umd.min.js"></script>
 <script src="vendor/jspdf.plugin.autotable.min.js"></script>
 <script src="vendor/html5-qrcode.min.js"></script>
+<script src="vendor/firebase-app-compat.js"></script>
+<script src="vendor/firebase-auth-compat.js"></script>
+<script src="vendor/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 <script src="bauaufmass.js"></script>
 <script src="app.js"></script>
+<script src="cloudsync.js"></script>
 </body>
 </html>
