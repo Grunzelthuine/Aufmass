@@ -164,48 +164,14 @@ function topFavoriten(limit = 20) {
     .slice(0, limit);
 }
 
-/* ---------- Eigene Standardmaterial-Ergänzungen ----------
-   Da die App rein lokal läuft (kein Server), werden Artikel, die der Nutzer
-   aus "Aus Liste" heraus zu "Standardmaterial" übernimmt, nur auf diesem
-   Gerät gespeichert und beim Laden mit standardmaterial.json zusammengeführt.
-   Über den Export-Link im Standardmaterial-Tab lassen sie sich als Datei
-   sichern, um sie dauerhaft in die zentrale standardmaterial.json einzupflegen. */
+/* ---------- Standardmaterial (v15) ----------
+   Kommt jetzt aus der zentralen Materialdatenbank (datenbank.js). */
 
-function ladeCustomStandardMaterial() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_STANDARD_ERGAENZUNGEN);
-    customStandardMaterial = raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    console.error("Eigene Standardmaterial-Ergänzungen konnten nicht geladen werden", e);
-    customStandardMaterial = [];
-  }
-}
+function ladeCustomStandardMaterial() { /* v15: in der Materialdatenbank enthalten */ }
 
-function speichereCustomStandardMaterial() {
-  try {
-    localStorage.setItem(STORAGE_KEY_STANDARD_ERGAENZUNGEN, JSON.stringify(customStandardMaterial));
-  } catch (e) {
-    console.error("Eigene Standardmaterial-Ergänzungen konnten nicht gespeichert werden", e);
-  }
-}
-
-function nehmeInStandardmaterialAuf(kategorie, bezeichnung, einheit) {
-  const eintrag = { k: kategorie, b: bezeichnung, e: einheit, _eigen: true };
-  customStandardMaterial.push(eintrag);
-  speichereCustomStandardMaterial();
-  standardMaterialDB.push({ ...eintrag, _s: (kategorie + " " + bezeichnung).toLowerCase() });
-}
-
-function exportiereCustomStandardMaterial() {
-  const blob = new Blob([JSON.stringify(customStandardMaterial, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "standardmaterial-ergaenzungen.json";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+// Artikel aus „Aus Liste“ in die Materialdatenbank übernehmen
+function nehmeInStandardmaterialAuf(katId, bezeichnung, einheit, nr, ean) {
+  return dbNeu({ kat: katId, name: bezeichnung, nr: nr || "", ean: ean || "", einheit });
 }
 
 /* ---------- Barcode-Scanner (Kamera) ----------
@@ -253,7 +219,9 @@ function oeffneBarcodeScanner(onErgebnis) {
   // Rahmen passend zur Form eines 1D-Barcodes statt eines Quadrats.
   const config = {
     fps: 12,
-    qrbox: { width: 280, height: 130 },
+    // Scan-Rahmen relativ zum (verkleinerten) Kamerabild
+    qrbox: (w, h) => ({ width: Math.floor(Math.min(280, w * 0.85)), height: Math.floor(Math.min(130, h * 0.6)) }),
+    aspectRatio: 1.7,
     videoConstraints: {
       facingMode: "environment",
       width: { ideal: 1920 },
@@ -282,13 +250,20 @@ function oeffneBarcodeScanner(onErgebnis) {
 
 function schliesseBarcodeScanner() {
   const overlay = document.getElementById("scannerOverlay");
+  // v15: Overlay zuerst schließen – stop() wirft sofort einen Fehler, wenn die
+  // Kamera gar nicht gestartet war (z. B. keine Berechtigung). Vorher blieb
+  // das Overlay dann offen und „Schließen“ schien nicht zu funktionieren.
+  overlay.hidden = true;
+  barcodeScanErgebnisCallback = null;
   if (html5QrcodeScanner) {
     const scanner = html5QrcodeScanner;
     html5QrcodeScanner = null;
-    scanner.stop().then(() => scanner.clear()).catch(() => {});
+    try {
+      Promise.resolve(scanner.stop()).then(() => scanner.clear()).catch(() => { try { scanner.clear(); } catch (e) { /* egal */ } });
+    } catch (e) {
+      try { scanner.clear(); } catch (e2) { /* egal */ }
+    }
   }
-  barcodeScanErgebnisCallback = null;
-  overlay.hidden = true;
 }
 
 function barcodeManuellSuchen() {
@@ -474,51 +449,16 @@ async function raeumeAltenKatalogCacheAuf(version) {
 
 window.addEventListener("online", () => { if (!materialDBReady) ladeMaterialDB(); });
 
-/* ---------- Eigene Artikel (unbekannte EAN, v9.2) ----------
-   Wird ein Code gescannt/eingegeben, den der Katalog nicht kennt, kann man
-   eine Produktbeschreibung + Einheit eingeben. Der Artikel wird lokal
-   gespeichert (EAN dient als Artikelnummer) und ist ab dann über Scan,
-   Suche und Favoriten wie ein Katalogartikel auffindbar. Rein geräte-lokal. */
+/* ---------- Eigene Artikel (unbekannte EAN) ----------
+   Seit v15 Teil der Materialdatenbank: alle Datenbank-Einträge mit EAN oder
+   Art.-Nr. sind in „Aus Liste“ such- und scanbar (siehe datenbank.js). */
 let eigeneArtikel = [];
 
-function mitSuchstring(a) {
-  a._s = (a.n + " " + a.b).toLowerCase();
-  a._eigen = true;
-  return a;
-}
+function ladeEigeneArtikel() { aktualisiereAbgeleiteteListen(); }
 
-function ladeEigeneArtikel() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_EIGENE_ARTIKEL);
-    eigeneArtikel = (raw ? JSON.parse(raw) : []).map(mitSuchstring);
-  } catch (e) {
-    console.error("Eigene Artikel konnten nicht geladen werden", e);
-    eigeneArtikel = [];
-  }
-}
-
-function speichereEigeneArtikel() {
-  try {
-    const daten = eigeneArtikel.map((a) => ({ n: a.n, b: a.b, e: a.e, g: a.g, angelegt: a.angelegt }));
-    localStorage.setItem(STORAGE_KEY_EIGENE_ARTIKEL, JSON.stringify(daten));
-  } catch (e) {
-    console.error("Eigene Artikel konnten nicht gespeichert werden", e);
-  }
-}
-
-function legeEigenenArtikelAn(code, bezeichnung, einheit) {
-  const vorhanden = eigeneArtikel.find((a) => a.g === code);
-  if (vorhanden) {
-    vorhanden.b = bezeichnung;
-    vorhanden.e = einheit;
-    mitSuchstring(vorhanden);
-    speichereEigeneArtikel();
-    return vorhanden;
-  }
-  const neu = mitSuchstring({ n: code, b: bezeichnung, e: einheit, g: code, angelegt: new Date().toISOString() });
-  eigeneArtikel.unshift(neu);
-  speichereEigeneArtikel();
-  return neu;
+function legeEigenenArtikelAn(code, bezeichnung, einheit, katId) {
+  const m = dbNeu({ kat: katId || KAT_EIGENE, name: bezeichnung, nr: "", ean: code, einheit });
+  return eigeneArtikel.find((a) => a._dbId === m.id) || { n: code, b: bezeichnung, e: einheit, g: code, _eigen: true, _dbId: m.id, _s: (code + " " + bezeichnung).toLowerCase() };
 }
 
 function istEanAehnlich(code) {
@@ -582,20 +522,23 @@ function sucheMaterial(query, limit = 30) {
 }
 
 async function ladeStandardMaterialDB() {
-  try {
-    const res = await fetch("standardmaterial.json");
-    const data = await res.json();
-    const kombiniert = data.concat(customStandardMaterial);
-    standardMaterialDB = kombiniert.map((a) => ({ ...a, _s: (a.k + " " + a.b).toLowerCase() }));
-    standardMaterialDBReady = true;
-  } catch (e) {
-    console.error("Standardmaterial-Liste konnte nicht geladen werden", e);
-    standardMaterialDB = [];
-    standardMaterialDBReady = false;
-  }
+  aktualisiereAbgeleiteteListen(); // v15: aus der Materialdatenbank
 }
 
-/* ---------- Navigation / Rendering ---------- */
+/* ---------- Navigation / Rendering (v15: Startbildschirm + Listen) ----------
+   ansicht: "start" | "liste" | "detail" | "datenbank" | "konto"
+   aktuellerBereich: "aufmass" | "bau" | "packliste" (welche Liste angezeigt wird) */
+
+let ansicht = "start";
+let aktuellerBereich = null;
+
+function setzeAnsicht(name) { ansicht = name; }
+
+const BEREICHE = {
+  aufmass: { titel: "Aufmaße", einzeln: "Aufmaß", icon: "📋", neu: () => oeffneFormular(neuesAufmass()) },
+  bau: { titel: "Bauaufmaße", einzeln: "Bauaufmaß", icon: "🏠", neu: () => oeffneBauaufmass(neuesBauaufmass()) },
+  packliste: { titel: "Packlisten", einzeln: "Packliste", icon: "📦", neu: () => oeffnePackliste(neuePackliste()) }
+};
 
 // Nach dem Löschen aufrufen (vor zeigeUebersicht), damit der Autosave-Flush
 // das gerade gelöschte Element nicht wieder in die Liste schreibt.
@@ -607,8 +550,8 @@ function verwerfeAktuellesOhneSpeichern() {
   if (typeof currentRaum !== "undefined") currentRaum = null;
 }
 
-function zeigeUebersicht() {
-  // Ausstehenden Autosave sofort ausführen, bevor die Referenzen verworfen werden
+// Ausstehenden Autosave sofort ausführen und offene Einträge schließen
+function schliesseOffeneEintraege() {
   clearTimeout(saveTimer);
   if (currentAufmass && !istLeeresAufmass(currentAufmass)) upsertCurrentInListe();
   if (currentPackliste && !istLeerePackliste(currentPackliste)) upsertCurrentPackliste();
@@ -621,73 +564,111 @@ function zeigeUebersicht() {
   selectedArtikel = null;
   selectedStandardArtikel = null;
   selectedFavoritArtikel = null;
-  headerTitle.textContent = "Material-Aufmaß";
+}
+
+// Neu zeichnen, falls gerade Start oder eine Liste angezeigt wird (z. B. nach Cloud-Sync)
+function aktualisiereListenansicht() {
+  if (ansicht === "start") zeigeStart();
+  else if (ansicht === "liste") zeigeUebersicht();
+}
+
+function zeigeStart() {
+  schliesseOffeneEintraege();
+  setzeAnsicht("start");
+  aktuellerBereich = null;
+  headerTitle.textContent = "Aufmaß-App";
   btnBack.hidden = true;
-  btnNew.hidden = false;
-
-  const tpl = document.getElementById("tpl-uebersicht");
+  btnNew.hidden = true;
   app.innerHTML = "";
-  app.appendChild(tpl.content.cloneNode(true));
-
-  const listeEl = document.getElementById("aufmassListe");
-  const leerEl = document.getElementById("listeLeer");
-
-  if (aufmassListe.length === 0) {
-    leerEl.hidden = false;
-    leerEl.querySelector('[data-action="new"]').addEventListener("click", () => oeffneFormular(neuesAufmass()));
-  } else {
-    leerEl.hidden = true;
-    const sortiert = [...aufmassListe].sort((a, b) => (b.geaendert || "").localeCompare(a.geaendert || ""));
-
-    for (const a of sortiert) {
-      const li = document.createElement("li");
-      li.className = "aufmass-card";
-      const anzahl = a.material.length;
-      const kundeName = a.kunde.name.trim() || "(ohne Kundenname)";
-      const beschreibung = a.arbeitsbeschreibung.trim();
-      li.innerHTML = `
-        <div class="info">
-          <p class="kunde">${escapeHtml(kundeName)}</p>
-          <p class="meta">${formatDatumDE(a.datum)} · ${anzahl} Position${anzahl === 1 ? "" : "en"}${beschreibung ? " · " + escapeHtml(beschreibung) : ""}</p>
-        </div>
-        <span class="chevron">›</span>
-      `;
-      li.addEventListener("click", () => oeffneFormular(a));
-      listeEl.appendChild(li);
-    }
-  }
-
-  renderBauaufmassUebersicht();
+  const view = document.createElement("section");
+  view.className = "view";
+  const kachel = (icon, titel, info, onClick, klasse) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "kachel " + (klasse || "");
+    b.innerHTML = `<span class="kachel-icon">${icon}</span><span class="kachel-text"><strong></strong><small></small></span><span class="chevron">›</span>`;
+    b.querySelector("strong").textContent = titel;
+    b.querySelector("small").textContent = info;
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  const anz = (n, s, p) => `${n} ${n === 1 ? s : p}`;
+  view.appendChild(kachel("📋", "Aufmaß", anz(aufmassListe.length, "Aufmaß", "Aufmaße") + " · Material je Baustelle", () => { aktuellerBereich = "aufmass"; zeigeUebersicht(); }));
+  view.appendChild(kachel("🏠", "Bauaufmaß", anz(bauaufmasse.length, "Bauaufmaß", "Bauaufmaße") + " · Etagen, Räume, Verteilung", () => { aktuellerBereich = "bau"; zeigeUebersicht(); }));
+  view.appendChild(kachel("📦", "Packliste", anz(packlisten.length, "Packliste", "Packlisten") + " · Abhaken beim Einladen", () => { aktuellerBereich = "packliste"; zeigeUebersicht(); }));
+  view.appendChild(kachel("🗂", "Materialdatenbank", `${dbMaterial.length} Einträge · Standardmaterial, Produkte, eigene Artikel`, () => oeffneDatenbank()));
+  const cloudKachel = kachel("☁", "Cloud-Sync", "", () => oeffneCloudKonto(), "kachel-cloud");
+  cloudKachel.querySelector("small").id = "cloudStatus";
+  view.appendChild(cloudKachel);
+  app.appendChild(view);
+  window.scrollTo(0, 0);
   if (typeof renderCloudStatus === "function") renderCloudStatus();
+}
 
-  document.getElementById("btnNewPackliste").addEventListener("click", () => oeffnePackliste(neuePackliste()));
+// Liste des aktuellen Bereichs (Aufmaße / Bauaufmaße / Packlisten)
+function zeigeUebersicht() {
+  schliesseOffeneEintraege();
+  if (!aktuellerBereich) { zeigeStart(); return; }
+  setzeAnsicht("liste");
+  const bereich = BEREICHE[aktuellerBereich];
+  headerTitle.textContent = bereich.titel;
+  btnBack.hidden = false;
+  btnNew.hidden = false;
+  app.innerHTML = "";
+  const view = document.createElement("section");
+  view.className = "view";
+  const neu = document.createElement("button");
+  neu.type = "button";
+  neu.className = "btn btn-primary btn-gross";
+  neu.textContent = `＋ Neues ${bereich.einzeln}`;
+  if (aktuellerBereich === "packliste") neu.textContent = "＋ Neue Packliste";
+  neu.addEventListener("click", bereich.neu);
+  view.appendChild(neu);
+  const ul = document.createElement("ul");
+  ul.className = "card-list";
+  view.appendChild(ul);
+  const leer = document.createElement("p");
+  leer.className = "hint";
+  view.appendChild(leer);
+  app.appendChild(view);
 
-  const packlistenListeEl = document.getElementById("packlistenListe");
-  const packlistenLeerEl = document.getElementById("packlistenLeer");
+  const karte = (titel, meta, onClick) => {
+    const li = document.createElement("li");
+    li.className = "aufmass-card";
+    li.innerHTML = `<div class="info"><p class="kunde"></p><p class="meta"></p></div><span class="chevron">›</span>`;
+    li.querySelector(".kunde").textContent = titel;
+    li.querySelector(".meta").textContent = meta;
+    li.addEventListener("click", onClick);
+    ul.appendChild(li);
+  };
+  const sortiere = (l) => [...l].sort((a, b) => (b.geaendert || "").localeCompare(a.geaendert || ""));
 
-  if (packlisten.length === 0) {
-    packlistenLeerEl.hidden = false;
-  } else {
-    packlistenLeerEl.hidden = true;
-    const sortiertP = [...packlisten].sort((a, b) => (b.geaendert || "").localeCompare(a.geaendert || ""));
-
-    for (const p of sortiertP) {
-      const li = document.createElement("li");
-      li.className = "aufmass-card";
-      const gesamt = p.material.length;
-      const offenAnzahl = p.material.filter((m) => !m.erledigt).length;
-      const bezeichnung = p.bezeichnung.trim() || "(ohne Bezeichnung)";
-      li.innerHTML = `
-        <div class="info">
-          <p class="kunde">${escapeHtml(bezeichnung)}</p>
-          <p class="meta">${formatDatumDE(p.datum)} · ${offenAnzahl} von ${gesamt} noch zu packen</p>
-        </div>
-        <span class="chevron">›</span>
-      `;
-      li.addEventListener("click", () => oeffnePackliste(p));
-      packlistenListeEl.appendChild(li);
+  if (aktuellerBereich === "aufmass") {
+    leer.textContent = aufmassListe.length ? "" : "Noch kein Aufmaß erfasst.";
+    for (const a of sortiere(aufmassListe)) {
+      const n = a.material.length;
+      const besch = a.arbeitsbeschreibung.trim();
+      karte(a.kunde.name.trim() || "(ohne Kundenname)", `${formatDatumDE(a.datum)} · ${n} Position${n === 1 ? "" : "en"}${besch ? " · " + besch : ""}`, () => oeffneFormular(a));
+    }
+  } else if (aktuellerBereich === "packliste") {
+    leer.textContent = packlisten.length ? "" : "Noch keine Packliste angelegt.";
+    for (const p of sortiere(packlisten)) {
+      const offen = p.material.filter((m) => !m.erledigt).length;
+      karte(p.bezeichnung.trim() || "(ohne Bezeichnung)", `${formatDatumDE(p.datum)} · ${offen} von ${p.material.length} noch zu packen`, () => oeffnePackliste(p));
+    }
+  } else if (aktuellerBereich === "bau") {
+    leer.textContent = bauaufmasse.length ? "" : "Noch kein Bauaufmaß angelegt.";
+    for (const b of sortiere(bauaufmasse)) {
+      const nR = b.etagen.reduce((s, e) => s + e.raeume.length, 0);
+      const nV = (b.verteilungen || []).length;
+      const besch = b.arbeitsbeschreibung.trim();
+      karte(b.kunde.name.trim() || "(ohne Kundenname)",
+        `${formatDatumDE(erstelltDatumISO(b))} · ${b.etagen.length} Etage${b.etagen.length === 1 ? "" : "n"}, ${nR} Raum${nR === 1 ? "" : "e"}${nV ? `, ${nV} Verteilung${nV === 1 ? "" : "en"}` : ""}${besch ? " · " + besch : ""}`,
+        () => oeffneBauaufmass(b));
     }
   }
+  leer.hidden = !leer.textContent;
+  window.scrollTo(0, 0);
 }
 
 function escapeHtml(str) {
@@ -697,6 +678,8 @@ function escapeHtml(str) {
 }
 
 function oeffneFormular(aufmass) {
+  setzeAnsicht("detail");
+  aktuellerBereich = "aufmass";
   currentAufmass = aufmass;
   currentPackliste = null;
   currentBauaufmass = null;
@@ -888,7 +871,7 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
 
   function oeffneEanNeuForm(code) {
     eanNeuCode = code;
-    eanNeuHinweis.innerHTML = `Code <strong>${escapeHtml(code)}</strong> ist nicht im Katalog. Produktbeschreibung eingeben – der Artikel wird gemerkt und beim nächsten Scan direkt erkannt.`;
+    eanNeuHinweis.innerHTML = `Code <strong>${escapeHtml(code)}</strong> ist nicht im Katalog. Produktbeschreibung eingeben – der Artikel wird in der Materialdatenbank gespeichert und beim nächsten Scan direkt erkannt.`;
     enBezeichnung.value = "";
     enEinheit.value = enEinheit.value || "Stck";
     ergebnisListe.hidden = true;
@@ -896,6 +879,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     btnZuStandardOeffnen.hidden = true;
     standardUebernahmeForm.hidden = true;
     eanNeuForm.hidden = false;
+    const katSel = document.getElementById("en_kategorie");
+    if (katSel) fuelleKategorieSelect(katSel, KAT_EIGENE, false);
     aktualisiereEanNeuButton();
     enBezeichnung.focus();
   }
@@ -913,7 +898,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     const b = enBezeichnung.value.trim();
     const e = enEinheit.value.trim();
     if (!eanNeuCode || !b || !e) return;
-    const item = legeEigenenArtikelAn(eanNeuCode, b, e);
+    const katSel = document.getElementById("en_kategorie");
+    const item = legeEigenenArtikelAn(eanNeuCode, b, e, katSel && katSel.value !== "__neu__" ? katSel.value : KAT_EIGENE);
     schliesseEanNeuForm();
     waehleArtikel(item); // danach nur noch Menge eingeben + "Hinzufügen"
   });
@@ -1086,17 +1072,7 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
   // "Zu Standardmaterial übernehmen": lokal gespeicherte Ergänzung, siehe
   // nehmeInStandardmaterialAuf() weiter oben.
   function fuelleKategorieOptionen() {
-    suKategorie.innerHTML = "";
-    for (const k of STANDARD_KATEGORIEN) {
-      const opt = document.createElement("option");
-      opt.value = k;
-      opt.textContent = k;
-      suKategorie.appendChild(opt);
-    }
-    const optNeu = document.createElement("option");
-    optNeu.value = "__neu__";
-    optNeu.textContent = "➕ Andere / neue Kategorie…";
-    suKategorie.appendChild(optNeu);
+    fuelleKategorieSelect(suKategorie, KAT_EIGENE, true); // v15: Kategorien der Materialdatenbank
   }
 
   suKategorie.addEventListener("change", () => {
@@ -1106,7 +1082,7 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
   btnZuStandardOeffnen.addEventListener("click", () => {
     if (!selectedArtikel) return;
     fuelleKategorieOptionen();
-    suKategorie.value = "Sonstige Standardartikel";
+    suKategorie.value = KAT_EIGENE;
     suKategorieNeuWrap.hidden = true;
     suKategorieNeu.value = "";
     suBezeichnung.value = selectedArtikel.b;
@@ -1127,11 +1103,13 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     if (!bezeichnung) { suBezeichnung.focus(); return; }
     let kategorie = suKategorie.value;
     if (kategorie === "__neu__") {
-      kategorie = suKategorieNeu.value.trim();
-      if (!kategorie) { suKategorieNeu.focus(); return; }
+      const k = legeKategorieAn(suKategorieNeu.value);
+      if (!k) { suKategorieNeu.focus(); return; }
+      kategorie = k.id;
     }
-    nehmeInStandardmaterialAuf(kategorie, bezeichnung, einheit);
-    aktualisiereStandardExportHinweis();
+    const nr = selectedArtikel && !selectedArtikel._eigen ? selectedArtikel.n : "";
+    const ean = selectedArtikel ? (selectedArtikel.g || "") : "";
+    nehmeInStandardmaterialAuf(kategorie, bezeichnung, einheit, nr, ean);
     renderStandardListe(sucheStandardInput.value);
     suBestaetigung.hidden = false;
     setTimeout(() => {
@@ -1149,20 +1127,13 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
   const btnAddStandard = document.getElementById("btnAddStandard");
   const standardExportHinweis = document.getElementById("standardExportHinweis");
 
-  function aktualisiereStandardExportHinweis() {
-    if (customStandardMaterial.length === 0) {
-      standardExportHinweis.hidden = true;
-      return;
-    }
-    standardExportHinweis.hidden = false;
-    const anzahlText = customStandardMaterial.length === 1 ? "1 eigene Ergänzung" : `${customStandardMaterial.length} eigene Ergänzungen`;
-    standardExportHinweis.innerHTML = `${anzahlText} aus „Aus Liste“ übernommen. <a href="#" id="standardExportLink">Als Datei exportieren</a>`;
-    document.getElementById("standardExportLink").addEventListener("click", (e) => {
-      e.preventDefault();
-      exportiereCustomStandardMaterial();
-    });
-  }
-  aktualisiereStandardExportHinweis();
+  // v15: Hinweis auf die zentrale Materialdatenbank
+  standardExportHinweis.hidden = false;
+  standardExportHinweis.innerHTML = `Bearbeiten, Kategorien und neues Material: <a href="#" id="standardDbLink">Materialdatenbank</a>`;
+  document.getElementById("standardDbLink").addEventListener("click", (e) => {
+    e.preventDefault();
+    if (confirm("Zur Materialdatenbank wechseln? (Eingaben sind gespeichert.)")) { schliesseOffeneEintraege(); oeffneDatenbank(); }
+  });
 
   function aktualisiereAddStandardButton() {
     const menge = parseFloat(mengeStandard.value);
@@ -1208,8 +1179,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
       }
       const row = document.createElement("div");
       row.className = "artikel-zeile";
-      const eigenHinweis = item._eigen ? " · eigene Ergänzung" : "";
-      row.innerHTML = `${escapeHtml(item.b)}<small>${escapeHtml(item.e)}${eigenHinweis}</small>`;
+      const nrHinweis = item.n ? ` · Art.-Nr. ${escapeHtml(item.n)}` : (item.g ? ` · EAN ${escapeHtml(item.g)}` : "");
+      row.innerHTML = `${escapeHtml(item.b)}<small>${escapeHtml(item.e)}${nrHinweis}</small>`;
       row.addEventListener("click", () => waehleStandardArtikel(item));
       standardListeEl.appendChild(row);
       treffer++;
@@ -1237,7 +1208,7 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     material.push({
       id: neueId(),
       bezeichnung: selectedStandardArtikel.b,
-      artikelnummer: "",
+      artikelnummer: selectedStandardArtikel.n || "",
       einheit: selectedStandardArtikel.e,
       menge,
       quelle: "standard",
@@ -1389,6 +1360,8 @@ function renderMaterialTabelle() {
 /* ---------- Packliste ---------- */
 
 function oeffnePackliste(packliste) {
+  setzeAnsicht("detail");
+  aktuellerBereich = "packliste";
   currentPackliste = packliste;
   currentAufmass = null;
   currentBauaufmass = null;
@@ -1621,22 +1594,27 @@ function erstellePdf(a) {
 
 /* ---------- Init ---------- */
 
-btnBack.addEventListener("click", () => (zurueckAktion ? zurueckAktion() : zeigeUebersicht()));
-btnNew.addEventListener("click", () => oeffneFormular(neuesAufmass()));
+// Zurück: eigenes Ziel (z. B. Raum -> Bauaufmaß), sonst Liste -> Start, Detail -> Liste
+btnBack.addEventListener("click", () => {
+  if (zurueckAktion) zurueckAktion();
+  else if (ansicht === "liste") zeigeStart();
+  else zeigeUebersicht();
+});
+btnNew.addEventListener("click", () => { if (aktuellerBereich) BEREICHE[aktuellerBereich].neu(); });
 
 ladeListe();
 ladePacklisten();
 ladeBauaufmasse();
-ladeProdukte();
 ladeFavoriten();
-ladeCustomStandardMaterial();
-ladeEigeneArtikel();
+ladeDatenbank();
 ladeMaterialDB();
-ladeStandardMaterialDB();
-zeigeUebersicht();
+zeigeStart();
+initDatenbank(); // einmalige Übernahme von Standardmaterial, Produktliste und eigenen Artikeln
 
 const btnScannerSchliessen = document.getElementById("btnScannerSchliessen");
 if (btnScannerSchliessen) btnScannerSchliessen.addEventListener("click", schliesseBarcodeScanner);
+const btnScannerAbbrechen = document.getElementById("btnScannerAbbrechen");
+if (btnScannerAbbrechen) btnScannerAbbrechen.addEventListener("click", schliesseBarcodeScanner);
 
 const scannerManuellBtn = document.getElementById("scannerManuellBtn");
 const scannerManuellInput = document.getElementById("scannerManuellInput");

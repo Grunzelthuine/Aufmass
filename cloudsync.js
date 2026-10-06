@@ -24,11 +24,10 @@ const SYNC_SAMMLUNGEN = [
   { name: "aufmasse", key: "aufmass_v1_liste", typ: "array", id: (x) => x.id, neu: () => ladeListe() },
   { name: "packlisten", key: "aufmass_v1_packlisten", typ: "array", id: (x) => x.id, neu: () => ladePacklisten() },
   { name: "bauaufmasse", key: "aufmass_v1_bauaufmasse", typ: "array", id: (x) => x.id, neu: () => ladeBauaufmasse() },
-  { name: "produkte", key: "aufmass_v1_produkte", typ: "array", id: (x) => x.id, neu: () => ladeProdukte() },
-  { name: "eigeneArtikel", key: "aufmass_v1_eigene_artikel", typ: "array", id: (x) => x.g || x.n, neu: () => ladeEigeneArtikel() },
-  { name: "favoriten", key: "aufmass_v1_favoriten", typ: "map", neu: () => ladeFavoriten() },
-  { name: "standardErgaenzungen", key: "aufmass_v1_standard_ergaenzungen", typ: "array", id: (x) => x.k + "|" + x.b,
-    neu: () => { ladeCustomStandardMaterial(); ladeStandardMaterialDB(); } }
+  // v15: zentrale Materialdatenbank (ersetzt produkte, eigeneArtikel, standardErgaenzungen)
+  { name: "kategorien", key: "aufmass_v1_kategorien", typ: "array", id: (x) => x.id, neu: () => ladeDatenbank() },
+  { name: "material", key: "aufmass_v1_material", typ: "array", id: (x) => x.id, neu: () => ladeDatenbank() },
+  { name: "favoriten", key: "aufmass_v1_favoriten", typ: "map", neu: () => ladeFavoriten() }
 ];
 
 const cloud = {
@@ -108,10 +107,16 @@ function scanSammlung(s) {
   const lokal = lokaleEintraege(s);
   const jetzt = Date.now();
   let geaendert = false;
-  for (const [id, { json }] of lokal) {
+  for (const [id, { json, item }] of lokal) {
     const h = syncHash(json);
     const e = m[id] || (m[id] = { h: null, lh: null, lt: 0 });
-    if (e.lh !== h) { e.lh = h; e.lt = jetzt; geaendert = true; }
+    if (e.lh !== h) {
+      // Aus alten Listen übernommene Einträge (_imp) gelten als „alt“, damit beim
+      // Einmischen der Stand aus der Cloud (z. B. eine Löschung) gewinnt.
+      e.lt = e.lh === null && item && item._imp ? 1 : jetzt;
+      e.lh = h;
+      geaendert = true;
+    }
   }
   for (const [id, e] of Object.entries(m)) {
     if (!lokal.has(id) && e.lh !== "DEL") { e.lh = "DEL"; e.lt = jetzt; geaendert = true; }
@@ -275,13 +280,13 @@ function beendeAbos() {
 }
 
 function uebersichtSichtbar() {
-  return !!document.getElementById("aufmassListe") && !currentAufmass && !currentPackliste && !currentBauaufmass;
+  return typeof ansicht !== "undefined" && (ansicht === "start" || ansicht === "liste");
 }
 
 // Nach eingemischten Änderungen: Übersicht neu zeichnen bzw. Hinweis, wenn der offene Eintrag betroffen ist
 function nachRemoteAenderung(s, ids) {
   if (uebersichtSichtbar()) {
-    zeigeUebersicht();
+    aktualisiereListenansicht();
     return;
   }
   const offen =
@@ -316,6 +321,7 @@ function loescheLokaleDaten() {
   cloud.intern = true;
   for (const s of SYNC_SAMMLUNGEN) localStorage.removeItem(s.key);
   localStorage.removeItem(SYNC_META_KEY);
+  localStorage.removeItem("aufmass_v1_db_version"); // Grundliste beim nächsten Start neu übernehmen
   cloud.intern = false;
   cloud.meta = { uid: null, colls: {} };
   for (const s of SYNC_SAMMLUNGEN) { try { s.neu(); } catch (e) { /* egal */ } }
@@ -333,7 +339,7 @@ async function beiAnmeldung(user) {
   for (const s of SYNC_SAMMLUNGEN) scanSammlung(s);
   aboniere();
   planeUi();
-  if (uebersichtSichtbar()) zeigeUebersicht();
+  if (uebersichtSichtbar()) aktualisiereListenansicht();
 }
 
 const AUTH_FEHLER = {
@@ -369,9 +375,15 @@ function renderCloudStatus() {
   const el = document.getElementById("cloudStatus");
   if (!el) return;
   const st = cloudStatusText();
-  el.className = "cloud-status " + st.klasse;
-  el.textContent = st.text;
-  el.onclick = oeffneCloudKonto;
+  if (el.closest(".kachel")) {
+    // Kachel auf dem Startbildschirm
+    el.className = "cloud-status-text " + st.klasse;
+    el.textContent = st.text.replace(/^☁\s*/, "").replace("Cloud-Sync: ", "");
+  } else {
+    el.className = "cloud-status " + st.klasse;
+    el.textContent = st.text;
+    el.onclick = oeffneCloudKonto;
+  }
 }
 
 function planeUi() {
@@ -384,11 +396,12 @@ function planeUi() {
 }
 
 function oeffneCloudKonto() {
+  setzeAnsicht("konto");
   currentAufmass = null;
   currentPackliste = null;
   currentBauaufmass = null;
   currentRaum = null;
-  zurueckAktion = null;
+  zurueckAktion = zeigeStart;
   headerTitle.textContent = "Cloud-Sync";
   btnBack.hidden = false;
   btnNew.hidden = true;
@@ -407,7 +420,7 @@ function oeffneCloudKonto() {
   if (!cloud.user) {
     view.innerHTML = `
       <div class="section-card" style="padding:14px">
-        <p style="margin-top:0">Mit einem Konto werden alle Aufmaße, Bauaufmaße, Packlisten, die Produktliste, eigene Artikel und Favoriten auf allen deinen Geräten abgeglichen. Andere Benutzer sehen nur ihre eigenen Daten.</p>
+        <p style="margin-top:0">Mit einem Konto werden alle Aufmaße, Bauaufmaße, Packlisten, die Materialdatenbank und Favoriten auf allen deinen Geräten abgeglichen. Andere Benutzer sehen nur ihre eigenen Daten.</p>
         <div class="field-grid">
           <label>E-Mail <input type="email" id="cl_email" autocomplete="username" inputmode="email"></label>
           <label>Passwort <input type="password" id="cl_pw" autocomplete="current-password"></label>
@@ -427,14 +440,14 @@ function oeffneCloudKonto() {
     const sperre = (an) => view.querySelectorAll("button").forEach((b) => (b.disabled = an));
     view.querySelector("#cl_login").addEventListener("click", async () => {
       sperre(true);
-      try { await cloud.auth.signInWithEmailAndPassword(email.value.trim(), pw.value); zeigeUebersicht(); }
+      try { await cloud.auth.signInWithEmailAndPassword(email.value.trim(), pw.value); zeigeStart(); }
       catch (e) { zeige(authFehlerText(e)); }
       sperre(false);
     });
     view.querySelector("#cl_register").addEventListener("click", async () => {
       if (pw.value.length < 6) { zeige("Bitte ein Passwort mit mindestens 6 Zeichen wählen."); return; }
       sperre(true);
-      try { await cloud.auth.createUserWithEmailAndPassword(email.value.trim(), pw.value); zeigeUebersicht(); }
+      try { await cloud.auth.createUserWithEmailAndPassword(email.value.trim(), pw.value); zeigeStart(); }
       catch (e) { zeige(authFehlerText(e)); }
       sperre(false);
     });
@@ -469,8 +482,8 @@ function oeffneCloudKonto() {
     const loeschen = confirm("Abmelden.\n\nOK = zusätzlich alle Daten von diesem Gerät entfernen (z. B. bei fremdem/geteiltem Gerät).\nAbbrechen = Daten auf dem Gerät behalten.");
     beendeAbos();
     await cloud.auth.signOut();
-    if (loeschen) loescheLokaleDaten();
-    zeigeUebersicht();
+    if (loeschen) { loescheLokaleDaten(); initDatenbank(); }
+    zeigeStart();
   });
 }
 

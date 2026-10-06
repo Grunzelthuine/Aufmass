@@ -54,7 +54,9 @@ const BAU_POSITIONEN_GRUPPEN = [
     { key: "trockner", b: "Anschluss Trockner" },
     { key: "kuehlschrank", b: "Anschluss Kühlschrank" },
     { key: "dunstabzug", b: "Anschluss Dunstabzug" },
-    { key: "durchlauferhitzer", b: "Anschluss Durchlauferhitzer" }
+    { key: "durchlauferhitzer", b: "Anschluss Durchlauferhitzer" },
+    { key: "badheizkoerper", b: "Anschluss Badheizkörper / Handtuchheizkörper" },
+    { key: "wc", b: "Anschluss Toilette / WC" }
   ] },
   { id: "komm", titel: "Kommunikation", positionen: [
     { key: "tae", b: "TAE / Telefon", abd: true },
@@ -76,8 +78,12 @@ const BAU_SCHALTUNGSTYPEN = [
   { key: "wechseldimmer", b: "Wechselschaltung mit Dimmer", min: 2 },
   { key: "kreuz", b: "Kreuzschaltung", min: 3 },
   { key: "taster", b: "Tasterschaltung", min: 1, stellenLabel: "Anzahl Taster", stellenEinheit: "Taster" },
-  { key: "handauto", b: "Handautomatik-Schalter", min: 1, ohneStellen: true, melder: true }
+  { key: "handauto", b: "Handautomatik-Schalter", min: 1, ohneStellen: true, melder: true },
+  { key: "knx", b: "KNX-Schaltung", min: 1, ohneStellen: true, knx: true, ohneAbdeckung: true }
 ];
+
+// Art der KNX-Lichtschaltung (v15)
+const BAU_KNX_LICHTARTEN = ["Schalten", "Dimmen", "Tunable White", "RGB(W)"];
 
 const BAU_MELDERARTEN = [
   { key: "praesenz", b: "Präsenzmelder" },
@@ -124,7 +130,9 @@ const PRODUKT_KATEGORIEN = [ // gruppe: Überschrift in der Produktliste
   { key: "knx_rtr", gruppe: "KNX", b: "KNX-Raumtemperaturregler", ph: "" },
   { key: "praesenz", gruppe: "Melder", b: "Präsenzmelder (konventionell)", ph: "z. B. Theben theRonda P360" },
   { key: "bewegung", gruppe: "Melder", b: "Bewegungsmelder (konventionell)", ph: "z. B. Steinel IS 3360" },
-  { key: "rauchmelder", gruppe: "Melder", b: "Rauchmelder", ph: "z. B. Ei Electronics Ei650" }
+  { key: "rauchmelder", gruppe: "Melder", b: "Rauchmelder", ph: "z. B. Ei Electronics Ei650" },
+  { key: "strahler", gruppe: "Beleuchtung", b: "Strahler / Downlights", ph: "z. B. SLV Universal Downlight 7 W 3000 K" },
+  { key: "ledstripe", gruppe: "Beleuchtung", b: "LED-Stripes", ph: "z. B. Paulmann MaxLED 1000 3000 K", einheit: "m" }
 ];
 const AMP = (liste) => liste.map((a) => a + " A");
 const QUERSCHNITTE = ["1,5 mm²", "2,5 mm²", "4 mm²", "6 mm²", "10 mm²", "16 mm²", "25 mm²", "35 mm²"];
@@ -260,7 +268,7 @@ for (const t of VERT_TYPEN) {
   const ph = idx >= 0 ? t.felder[idx].ph : "";
   const feld = { k: "typ", t: "produkt", l: "Typ / Hersteller", kat: "vert_" + t.key };
   if (idx >= 0) t.felder[idx] = feld; else t.felder.push(feld);
-  PRODUKT_KATEGORIEN.push({ key: "vert_" + t.key, b: t.b, gruppe: "Verteilung – " + t.gruppe, ph: ph && ph !== "optional" ? ph : "" });
+  PRODUKT_KATEGORIEN.push({ key: "vert_" + t.key, b: t.b, gruppe: "Verteilung – " + t.gruppe, ph: ph && ph !== "optional" ? ph : "", einheit: t.e || "Stck" });
 }
 
 let bauaufmasse = [];
@@ -401,6 +409,7 @@ function melderArt(key) {
 function schaltungBezeichnung(s) {
   const t = schaltungTyp(s.typ);
   if (t.melder) return `${t.b} mit ${melderArt(s.melderArt).b}`;
+  if (t.knx) return `${t.b} (${s.knxArt || "Schalten"})`;
   if (t.stellenEinheit) return `${t.b} (${s.schaltstellen} ${t.stellenEinheit})`;
   return t.b + (s.schaltstellen > 1 ? ` (${s.schaltstellen} Schaltstellen)` : "");
 }
@@ -506,21 +515,23 @@ function baueAuswahl({ platzhalter, gruppen, frei, onAdd }) {
 }
 
 // Zähler-Zeile: Bezeichnung + (−) [Zahl] (+)
-function baueZaehler(label, wert, min, onChange) {
+function baueZaehler(label, wert, min, onChange, optionen) {
+  const dezimal = optionen && optionen.dezimal;
   const row = document.createElement("div");
   row.className = "zaehler-zeile" + (wert > 0 ? " aktiv" : "");
   row.innerHTML = `
     <span class="zaehler-label"></span>
     <div class="menge-control">
       <button type="button" class="btn-qty" data-action="dec" aria-label="weniger">−</button>
-      <input type="number" step="1" min="${min}" inputmode="numeric" class="menge-input">
+      <input type="number" step="${dezimal ? "any" : "1"}" min="${min}" inputmode="${dezimal ? "decimal" : "numeric"}" class="menge-input">
       <button type="button" class="btn-qty" data-action="inc" aria-label="mehr">+</button>
     </div>`;
   row.querySelector(".zaehler-label").textContent = label;
   const input = row.querySelector("input");
   input.value = wert;
   const setze = (v) => {
-    v = Math.max(min, Math.round(isNaN(v) ? min : v));
+    v = isNaN(v) ? min : v;
+    v = Math.max(min, dezimal ? Math.round(v * 10) / 10 : Math.round(v));
     wert = v;
     input.value = v;
     row.classList.toggle("aktiv", v > 0);
@@ -675,152 +686,8 @@ function scrolleZuLetzter(selector) {
   if (karten.length) karten[karten.length - 1].scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
-/* ---------- Produktliste: Speicher + Katalogsuche (v12) ---------- */
-
-let produkte = [];
-
-function ladeProdukte() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_PRODUKTE);
-    produkte = raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    console.error("Produktliste konnte nicht geladen werden", e);
-    produkte = [];
-  }
-}
-
-function speichereProdukte() {
-  try {
-    localStorage.setItem(STORAGE_KEY_PRODUKTE, JSON.stringify(produkte));
-  } catch (e) {
-    console.error("Produktliste konnte nicht gespeichert werden", e);
-    alert("Speichern der Produktliste fehlgeschlagen.");
-  }
-}
-
-function produkteDerKategorie(kat) {
-  return produkte.filter((p) => p.kat === kat).sort((a, b) => a.name.localeCompare(b.name, "de"));
-}
-
-function produktKategorie(kat) {
-  return PRODUKT_KATEGORIEN.find((k) => k.key === kat) || { key: kat, b: kat, ph: "" };
-}
-
-function legeProduktAn(kat, name, nr, ean) {
-  const vorhanden = produkte.find((p) => p.kat === kat && p.name.toLowerCase() === name.toLowerCase());
-  if (vorhanden) {
-    if (nr) vorhanden.nr = nr;
-    if (ean) vorhanden.ean = ean;
-    speichereProdukte();
-    return vorhanden;
-  }
-  const p = { id: neueId(), kat, name, nr: nr || "", ean: ean || "" };
-  produkte.push(p);
-  speichereProdukte();
-  return p;
-}
-
-// Code (EAN oder Art.-Nr.) im Katalog bzw. bei den eigenen Artikeln suchen.
-function sucheArtikelZuCode(code) {
-  const c = (code || "").trim();
-  if (!c) return null;
-  const perEan = typeof sucheNachEan === "function" ? sucheNachEan(c, 5) : [];
-  if (perEan.length) return perEan[0];
-  const eigen = (typeof eigeneArtikel !== "undefined" ? eigeneArtikel : []).find((a) => a.n === c);
-  if (eigen) return eigen;
-  if (typeof materialDB !== "undefined") {
-    for (let i = 0; i < materialDB.length; i++) if (materialDB[i].n === c) return materialDB[i];
-  }
-  return null;
-}
-
-/* Formular „Neues Produkt“: Bezeichnung (Freitext) und/oder Art.-Nr./EAN
-   (Kamera-Scan oder Eingabe, Suche im Katalog füllt die Bezeichnung).
-   kat = feste Kategorie oder null (dann Auswahlfeld). */
-function baueProduktFormular({ kat, onSave, onCancel }) {
-  const form = document.createElement("div");
-  form.className = "selected-article produkt-form";
-  form.innerHTML = `
-    <label class="pf-kat-wrap">Kategorie <select class="pf-kat"></select></label>
-    <label>Art.-Nr. / EAN (optional)
-      <div class="suche-mit-scan">
-        <input type="text" class="pf-code" inputmode="numeric" placeholder="scannen oder eingeben" autocomplete="off">
-        <button type="button" class="btn-scan pf-scan" aria-label="Barcode scannen">📷</button>
-        <button type="button" class="btn btn-secondary pf-suchen">Suchen</button>
-      </div>
-    </label>
-    <p class="hint pf-hinweis" hidden></p>
-    <label>Bezeichnung
-      <input type="text" class="pf-name" autocomplete="off">
-    </label>
-    <div class="action-bar">
-      <button type="button" class="btn btn-secondary pf-speichern" disabled>Produkt speichern</button>
-      <button type="button" class="btn-danger-text pf-abbrechen">Abbrechen</button>
-    </div>`;
-  const katSel = form.querySelector(".pf-kat");
-  let og = null;
-  for (const k of PRODUKT_KATEGORIEN) {
-    if (!og || og.label !== k.gruppe) {
-      og = document.createElement("optgroup");
-      og.label = k.gruppe || "";
-      katSel.appendChild(og);
-    }
-    const o = document.createElement("option");
-    o.value = k.key;
-    o.textContent = k.b;
-    og.appendChild(o);
-  }
-  if (kat) { katSel.value = kat; form.querySelector(".pf-kat-wrap").hidden = true; }
-  const name = form.querySelector(".pf-name");
-  const code = form.querySelector(".pf-code");
-  const hinweis = form.querySelector(".pf-hinweis");
-  const btnSpeichern = form.querySelector(".pf-speichern");
-  let gefundeneNr = "";
-  let gefundeneEan = "";
-  const setzePlatzhalter = () => { name.placeholder = produktKategorie(katSel.value).ph || "Bezeichnung"; };
-  setzePlatzhalter();
-  katSel.addEventListener("change", setzePlatzhalter);
-  const pruefe = () => { btnSpeichern.disabled = !name.value.trim(); };
-  name.addEventListener("input", pruefe);
-
-  const suche = (wert) => {
-    const c = (wert || "").trim();
-    if (!c) { code.focus(); return; }
-    code.value = c;
-    hinweis.hidden = false;
-    const treffer = sucheArtikelZuCode(c);
-    if (treffer) {
-      name.value = treffer.b;
-      gefundeneNr = treffer.n;
-      gefundeneEan = treffer.g || (istEanAehnlich(c) ? c : "");
-      hinweis.innerHTML = `✓ Gefunden: <strong>${escapeHtml(treffer.b)}</strong> (Art.-Nr. ${escapeHtml(treffer.n)}) – Bezeichnung kann noch angepasst werden.`;
-    } else {
-      gefundeneNr = istEanAehnlich(c) ? "" : c;
-      gefundeneEan = istEanAehnlich(c) ? c : "";
-      hinweis.textContent = (typeof materialDBReady !== "undefined" && !materialDBReady)
-        ? "Materialliste wird noch geladen – Bezeichnung bitte selbst eintragen oder gleich noch einmal suchen."
-        : "Nicht im Katalog gefunden – Bezeichnung bitte selbst eintragen.";
-      name.focus();
-    }
-    pruefe();
-  };
-  form.querySelector(".pf-suchen").addEventListener("click", () => suche(code.value));
-  code.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); suche(code.value); } });
-  form.querySelector(".pf-scan").addEventListener("click", () => oeffneBarcodeScanner((roh) => suche(roh)));
-  code.addEventListener("input", () => { gefundeneNr = ""; gefundeneEan = ""; });
-
-  btnSpeichern.addEventListener("click", () => {
-    const n = name.value.trim();
-    if (!n) return;
-    const c = code.value.trim();
-    const nr = gefundeneNr || (c && !istEanAehnlich(c) ? c : "");
-    const ean = gefundeneEan || (istEanAehnlich(c) ? c : "");
-    onSave(legeProduktAn(katSel.value, n, nr, ean));
-  });
-  form.querySelector(".pf-abbrechen").addEventListener("click", () => onCancel && onCancel());
-  setTimeout(() => name.focus(), 0);
-  return form;
-}
+/* ---------- Produkt-Auswahl (v12, seit v15 aus der zentralen Materialdatenbank) ----------
+   produkteDerKategorie(), baueProduktFormular() stehen in datenbank.js. */
 
 /* Dropdown für Typ/Abdeckung aus der Produktliste.
    wert = aktueller Name (Freitext erlaubt), leerText = Text für „nichts gewählt“.
@@ -878,7 +745,7 @@ function baueProduktAuswahl({ kat, wert, leerText, label, onChange }) {
     formPlatz.innerHTML = "";
     if (v === "") setze("", "", "");
     else if (v.startsWith("p:")) {
-      const p = produkte.find((x) => x.id === v.slice(2));
+      const p = dbMaterial.find((x) => x.id === v.slice(2));
       if (p) setze(p.name, p.nr, p.id);
     } else if (v === "__frei__") {
       freiZeile.hidden = false;
@@ -903,102 +770,6 @@ function baueProduktAuswahl({ kat, wert, leerText, label, onChange }) {
   freiZeile.querySelector("button").addEventListener("click", freiOk);
   freiZeile.querySelector("input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); freiOk(); } });
   return wrap;
-}
-
-/* ---------- Produktliste: Verwaltungsansicht (v12) ---------- */
-
-function oeffneProduktliste() {
-  currentAufmass = null;
-  currentPackliste = null;
-  currentBauaufmass = null;
-  currentRaum = null;
-  zurueckAktion = null;
-  headerTitle.textContent = "Produktliste";
-  btnBack.hidden = false;
-  btnNew.hidden = true;
-  app.innerHTML = "";
-  const view = document.createElement("section");
-  view.className = "view";
-  view.innerHTML = `
-    <p class="hint" style="padding-top:0">Hier angelegte Produkte stehen im Bauaufmaß als Auswahl bereit (Typ bei KNX-Komponenten, Meldern und Verteilungs-Positionen, Abdeckungen). Anlegen per Freitext oder per EAN-/Art.-Nr.-Suche im Katalog. Gespeichert nur auf diesem Gerät.</p>
-    <div class="pl-neu"></div>
-    <div class="pl-liste view"></div>`;
-  app.appendChild(view);
-
-  const neuPlatz = view.querySelector(".pl-neu");
-  const zeigeNeuButton = () => {
-    neuPlatz.innerHTML = `<button type="button" class="btn btn-secondary">＋ Neues Produkt anlegen</button>`;
-    neuPlatz.querySelector("button").addEventListener("click", () => {
-      neuPlatz.innerHTML = "";
-      neuPlatz.appendChild(baueProduktFormular({
-        kat: null,
-        onSave: () => { zeigeNeuButton(); renderListe(); },
-        onCancel: zeigeNeuButton
-      }));
-    });
-  };
-  const renderListe = () => {
-    const liste = view.querySelector(".pl-liste");
-    liste.innerHTML = "";
-    let letzteGruppe = null;
-    for (const k of PRODUKT_KATEGORIEN) {
-      if (k.gruppe !== letzteGruppe) {
-        letzteGruppe = k.gruppe;
-        const h = document.createElement("h3");
-        h.className = "pl-gruppe";
-        h.textContent = k.gruppe || "";
-        liste.appendChild(h);
-      }
-      const eintraege = produkteDerKategorie(k.key);
-      const det = document.createElement("details");
-      det.className = "section-card";
-      det.open = eintraege.length > 0;
-      det.innerHTML = `<summary></summary><ul class="pl-eintraege"></ul><div class="pl-add"></div>`;
-      det.querySelector("summary").textContent = `${k.b} (${eintraege.length})`;
-      const ul = det.querySelector(".pl-eintraege");
-      if (!eintraege.length) {
-        const li = document.createElement("li");
-        li.className = "hint";
-        li.textContent = "Noch keine Produkte.";
-        ul.appendChild(li);
-      }
-      for (const p of eintraege) {
-        const li = document.createElement("li");
-        li.className = "pl-eintrag";
-        li.innerHTML = `<div class="info"><strong></strong><small></small></div>
-          <span class="komp-aktionen">
-            <button type="button" class="btn-mini" aria-label="Umbenennen">✎</button>
-            <button type="button" class="btn-mini btn-mini-danger" aria-label="Löschen">✕</button>
-          </span>`;
-        li.querySelector("strong").textContent = p.name;
-        li.querySelector("small").textContent = [p.nr && `Art.-Nr. ${p.nr}`, p.ean && `EAN ${p.ean}`].filter(Boolean).join(" · ");
-        li.querySelector('[aria-label="Umbenennen"]').addEventListener("click", () => {
-          const neu = prompt("Bezeichnung:", p.name);
-          if (neu && neu.trim()) { p.name = neu.trim(); speichereProdukte(); renderListe(); }
-        });
-        li.querySelector('[aria-label="Löschen"]').addEventListener("click", () => {
-          if (!confirm(`„${p.name}“ aus der Produktliste löschen? (Bereits erfasste Aufmaße behalten den Eintrag.)`)) return;
-          produkte = produkte.filter((x) => x.id !== p.id);
-          speichereProdukte();
-          renderListe();
-        });
-        ul.appendChild(li);
-      }
-      const addPlatz = det.querySelector(".pl-add");
-      const zeigeAdd = () => {
-        addPlatz.innerHTML = `<button type="button" class="btn-link-accent">＋ hinzufügen</button>`;
-        addPlatz.querySelector("button").addEventListener("click", () => {
-          addPlatz.innerHTML = "";
-          addPlatz.appendChild(baueProduktFormular({ kat: k.key, onSave: renderListe, onCancel: zeigeAdd }));
-        });
-      };
-      zeigeAdd();
-      liste.appendChild(det);
-    }
-  };
-  zeigeNeuButton();
-  renderListe();
-  window.scrollTo(0, 0);
 }
 
 /* ---------- Abdeckungen (v12) ----------
@@ -1040,11 +811,6 @@ function renderBauaufmassUebersicht() {
   const btn = document.getElementById("btnNewBauaufmass");
   if (!btn) return;
   btn.addEventListener("click", () => oeffneBauaufmass(neuesBauaufmass()));
-  const plBtn = document.getElementById("btnProduktliste");
-  if (plBtn) {
-    plBtn.textContent = `⚙ Produktliste (Abdeckungen, KNX, Melder, Verteilung) · ${produkte.length}`;
-    plBtn.addEventListener("click", oeffneProduktliste);
-  }
   const listeEl = document.getElementById("bauaufmassListe");
   const leerEl = document.getElementById("bauaufmasseLeer");
   leerEl.hidden = bauaufmasse.length !== 0;
@@ -1070,6 +836,8 @@ function renderBauaufmassUebersicht() {
 /* ---------- Bauaufmaß-Ansicht ---------- */
 
 function oeffneBauaufmass(b, scrollY) {
+  setzeAnsicht("detail");
+  aktuellerBereich = "bau";
   migriereBauaufmass(b);
   currentBauaufmass = b;
   currentRaum = null;
@@ -1309,6 +1077,7 @@ function renderVerteilungenListe() {
 /* ---------- Raum-Ansicht ---------- */
 
 function oeffneRaum(etage, raum) {
+  setzeAnsicht("detail");
   bauScrollPosition = window.scrollY;
   currentRaum = { etage, raum };
   currentMaterialHalter = raum;
@@ -1355,6 +1124,8 @@ function oeffneRaum(etage, raum) {
       const t = schaltungTyp(key);
       const s = { id: neueId(), typ: t.key, schaltstellen: t.min, wand: 0, decke: 0, steckdose: 0, strahler: 0, bemerkung: "" };
       if (t.melder) Object.assign(s, { melderArt: "praesenz", melderAnzahl: 1, melderTyp: "", melderNr: "" });
+      if (t.knx) s.knxArt = "Schalten";
+      s.stripes = [];
       raum.schaltungen.push(s);
       autosave();
       renderSchaltungen();
@@ -1459,6 +1230,7 @@ function oeffneRaum(etage, raum) {
     kopie.id = neueId();
     kopie.name = kopieRaumname(etage, raum.name || "Raum");
     for (const feld of ["schaltungen", "rollos", "knx", "melder", "abw", "material"]) (kopie[feld] || []).forEach((x) => (x.id = neueId()));
+    kopie.schaltungen.forEach((sch) => (sch.stripes || []).forEach((x) => (x.id = neueId())));
     etage.raeume.splice(etage.raeume.indexOf(raum) + 1, 0, kopie);
     autosave();
     oeffneRaum(etage, kopie);
@@ -1560,15 +1332,62 @@ function renderSchaltungen() {
       });
       mp.classList.add("melder-typ");
       zaehler.appendChild(mp);
+    } else if (t.knx) {
+      zaehler.appendChild(baueSegment("Art", BAU_KNX_LICHTARTEN, s.knxArt || "Schalten", (v) => { s.knxArt = v; autosave(); }));
     } else {
       const zs = baueZaehler(t.stellenLabel || "Schaltstellen", s.schaltstellen, t.min, (v) => { s.schaltstellen = v; autosave(); });
       zs.classList.add("zaehler-schaltstellen");
       zaehler.appendChild(zs);
     }
     for (const a of BAU_AUSLAESSE) {
-      zaehler.appendChild(baueZaehler(a.b, s[a.key] || 0, 0, (v) => { s[a.key] = v; autosave(); }));
+      zaehler.appendChild(baueZaehler(a.b, s[a.key] || 0, 0, (v) => {
+        const vorher = s[a.key] || 0;
+        s[a.key] = v;
+        autosave();
+        // Typ-Auswahl für Strahler ein-/ausblenden
+        if (a.key === "strahler" && (vorher > 0) !== (v > 0)) renderSchaltungen();
+      }));
+      if (a.key === "strahler" && s.strahler > 0) {
+        const sp = baueProduktAuswahl({
+          kat: "strahler", wert: s.strahlerTyp, label: "Typ Strahler", leerText: "Typ Strahler: – offen –",
+          onChange: ({ name, nr }) => { s.strahlerTyp = name; s.strahlerNr = nr; autosave(); }
+        });
+        sp.classList.add("unter-auswahl");
+        zaehler.appendChild(sp);
+      }
     }
-    karte.appendChild(baueAbdeckungsAuswahl(s));
+    // LED-Stripes (v15): beliebig viele je Schaltung, Meter + Typ
+    if (!Array.isArray(s.stripes)) s.stripes = [];
+    const stripesEl = document.createElement("div");
+    stripesEl.className = "stripes";
+    s.stripes.forEach((st, si) => {
+      const box = document.createElement("div");
+      box.className = "stripe-box";
+      box.innerHTML = `<div class="stripe-kopf"><span>LED-Stripe ${si + 1}</span><button type="button" class="btn-danger-text" aria-label="LED-Stripe entfernen">✕</button></div>`;
+      box.querySelector("button").addEventListener("click", () => {
+        s.stripes = s.stripes.filter((x) => x.id !== st.id);
+        autosave();
+        renderSchaltungen();
+      });
+      box.appendChild(baueZaehler("Länge (m)", st.meter || 0, 0, (v) => { st.meter = v; autosave(); }, { dezimal: true }));
+      box.appendChild(baueProduktAuswahl({
+        kat: "ledstripe", wert: st.typ, label: "Typ LED-Stripe", leerText: "Typ LED-Stripe: – offen –",
+        onChange: ({ name, nr }) => { st.typ = name; st.nr = nr; autosave(); }
+      }));
+      stripesEl.appendChild(box);
+    });
+    const plusStripe = document.createElement("button");
+    plusStripe.type = "button";
+    plusStripe.className = "btn-link-accent";
+    plusStripe.textContent = "＋ LED-Stripe";
+    plusStripe.addEventListener("click", () => {
+      s.stripes.push({ id: neueId(), meter: 1, typ: "", nr: "" });
+      autosave();
+      renderSchaltungen();
+    });
+    stripesEl.appendChild(plusStripe);
+    zaehler.appendChild(stripesEl);
+    if (!t.ohneAbdeckung) karte.appendChild(baueAbdeckungsAuswahl(s));
     karte.appendChild(baueTextFeld("Bemerkung (optional, z. B. Spiegel, Esstisch)", s.bemerkung, (v) => { s.bemerkung = v; autosave(); }));
     liste.appendChild(karte);
   });
@@ -1659,6 +1478,7 @@ function renderRaumMaterial() {
 /* ---------- Verteilung-Ansicht ---------- */
 
 function oeffneVerteilung(v) {
+  setzeAnsicht("detail");
   const b = currentBauaufmass;
   currentRaum = null;
   currentMaterialHalter = v;
@@ -1744,6 +1564,16 @@ function komponentenZeilen(liste, typen, mitGruppen) {
   return zeilen;
 }
 
+function strahlerZeile(s) {
+  const typ = (s.strahlerTyp || "").trim();
+  return "Strahler" + (typ ? ` – ${typ}` : "");
+}
+
+function stripeZeile(st) {
+  const typ = (st.typ || "").trim();
+  return "LED-Stripe" + (typ ? ` – ${typ}` : "");
+}
+
 function melderZeile(s) {
   const typ = (s.melderTyp || "").trim();
   return melderArt(s.melderArt).b + (typ ? ` – ${typ}` : "");
@@ -1760,10 +1590,15 @@ function bauRaumZeilen(b, raum) {
     raum.schaltungen.forEach((s) => {
       const t = schaltungTyp(s.typ);
       const bem = (s.bemerkung || "").trim();
-      zeilen.push({ b: schaltungBezeichnung(s) + (bem ? ` – ${bem}` : "") + eigeneAbd(s), menge: 1, e: "Stck", schaltung: true });
+      zeilen.push({ b: schaltungBezeichnung(s) + (bem ? ` – ${bem}` : "") + (t.ohneAbdeckung ? "" : eigeneAbd(s)), menge: 1, e: "Stck", schaltung: true });
       if (t.melder && s.melderAnzahl > 0) zeilen.push({ b: melderZeile(s), nr: s.melderNr || "", menge: s.melderAnzahl, e: "Stck", unter: true });
       for (const a of BAU_AUSLAESSE) {
-        if (s[a.key] > 0) zeilen.push({ b: a.b, menge: s[a.key], e: "Stck", unter: true });
+        if (!(s[a.key] > 0)) continue;
+        if (a.key === "strahler") zeilen.push({ b: strahlerZeile(s), nr: s.strahlerNr || "", menge: s[a.key], e: "Stck", unter: true });
+        else zeilen.push({ b: a.b, menge: s[a.key], e: "Stck", unter: true });
+      }
+      for (const st of s.stripes || []) {
+        if (st.meter > 0) zeilen.push({ b: stripeZeile(st), nr: st.nr || "", menge: st.meter, e: "m", unter: true });
       }
     });
   }
@@ -1843,7 +1678,8 @@ function summenMap() {
 function bauGesamtZeilen(b) {
   const schaltungen = summenMap();
   const melderHA = summenMap();
-  const auslaesse = {};
+  const auslaesseSM = summenMap();
+  const stripes = summenMap();
   const rollo = summenMap();
   const knx = summenMap();
   const melder = summenMap();
@@ -1868,10 +1704,16 @@ function bauGesamtZeilen(b) {
       migriereRaum(raum);
       const raumAbd = raumAbdeckung(b, raum);
       for (const s of raum.schaltungen) {
-        const abd = positionsAbdeckung(b, raum, s.abdeckung);
+        const st = schaltungTyp(s.typ);
+        const abd = st.ohneAbdeckung ? "" : positionsAbdeckung(b, raum, s.abdeckung);
         schaltungen.add(mitAbdeckung(schaltungBezeichnung(s), abd), 1, "Stck", "", rangSchaltung(s.typ));
-        if (schaltungTyp(s.typ).melder) melderHA.add(melderZeile(s), s.melderAnzahl || 0, "Stck", s.melderNr);
-        for (const a of BAU_AUSLAESSE) if (s[a.key] > 0) auslaesse[a.key] = (auslaesse[a.key] || 0) + s[a.key];
+        if (st.melder) melderHA.add(melderZeile(s), s.melderAnzahl || 0, "Stck", s.melderNr);
+        BAU_AUSLAESSE.forEach((a, idx) => {
+          if (!(s[a.key] > 0)) return;
+          if (a.key === "strahler") auslaesseSM.add(strahlerZeile(s), s[a.key], "Stck", s.strahlerNr, idx);
+          else auslaesseSM.add(a.b, s[a.key], "Stck", "", idx);
+        });
+        for (const x of s.stripes || []) if (x.meter > 0) stripes.add(stripeZeile(x), x.meter, "m", x.nr);
       }
       for (const r of raum.rollos || []) {
         if (!(r.anzahl > 0)) continue;
@@ -1905,11 +1747,8 @@ function bauGesamtZeilen(b) {
   const zeilen = [];
   if (schaltungen.size) zeilen.push({ gruppe: "Beleuchtung – Schaltungen" }, ...schaltungen.zeilen());
   if (melderHA.size) zeilen.push({ gruppe: "Beleuchtung – Melder (Handautomatik)" }, ...melderHA.zeilen());
-  const aus = BAU_AUSLAESSE.filter((a) => auslaesse[a.key] > 0);
-  if (aus.length) {
-    zeilen.push({ gruppe: "Beleuchtung – Auslässe" });
-    for (const a of aus) zeilen.push({ b: a.b, menge: auslaesse[a.key], e: "Stck" });
-  }
+  if (auslaesseSM.size) zeilen.push({ gruppe: "Beleuchtung – Auslässe" }, ...auslaesseSM.zeilen());
+  if (stripes.size) zeilen.push({ gruppe: "Beleuchtung – LED-Stripes" }, ...stripes.zeilen());
   if (rollo.size) zeilen.push({ gruppe: "Rollos" }, ...rollo.zeilen());
   if (knx.size) zeilen.push({ gruppe: "KNX (Räume)" }, ...knx.zeilen());
   if (melder.size) zeilen.push({ gruppe: "Melder" }, ...melder.zeilen());

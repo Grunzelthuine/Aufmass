@@ -18,7 +18,7 @@
   <div class="header-inner">
     <button id="btnBack" class="icon-btn" hidden aria-label="Zurück">←</button>
     <h1 id="headerTitle">Material-Aufmaß</h1>
-    <button id="btnNew" class="icon-btn" aria-label="Neues Aufmaß">＋</button>
+    <button id="btnNew" class="icon-btn" aria-label="Neu" hidden>＋</button>
   </div>
 </header>
 
@@ -33,7 +33,7 @@
   <div class="scanner-box">
     <div class="scanner-header">
       <span>Barcode scannen</span>
-      <button type="button" id="btnScannerSchliessen" class="icon-btn" aria-label="Schließen">✕</button>
+      <button type="button" id="btnScannerSchliessen" class="icon-btn scanner-x" aria-label="Schließen">✕</button>
     </div>
     <div id="scannerReader"></div>
     <p id="scannerHinweis" class="hint">Kamera wird gestartet…</p>
@@ -44,39 +44,10 @@
           <button type="button" class="btn btn-secondary" id="scannerManuellBtn">Suchen</button>
         </div>
       </label>
+      <button type="button" class="btn btn-outline-neutral scanner-abbrechen" id="btnScannerAbbrechen">Abbrechen – zurück</button>
     </div>
   </div>
 </div>
-
-<!-- Vorlage: Übersicht -->
-<template id="tpl-uebersicht">
-  <section class="view">
-    <button type="button" id="cloudStatus" class="cloud-status aus">☁ Cloud-Sync</button>
-    <div class="section-heading-row">
-      <h2>Aufmaße</h2>
-    </div>
-    <div id="listeLeer" class="empty-state" hidden>
-      <p>Noch kein Aufmaß erfasst.</p>
-      <button class="btn btn-primary" data-action="new">Erstes Aufmaß anlegen</button>
-    </div>
-    <ul id="aufmassListe" class="card-list"></ul>
-
-    <div class="section-heading-row section-heading-row-spaced">
-      <h2>Bauaufmaße</h2>
-      <button id="btnNewBauaufmass" class="btn-add-inline" aria-label="Neues Bauaufmaß">＋</button>
-    </div>
-    <p id="bauaufmasseLeer" class="hint" hidden>Noch kein Bauaufmaß angelegt.</p>
-    <ul id="bauaufmassListe" class="card-list"></ul>
-    <button type="button" id="btnProduktliste" class="btn-link-accent">⚙ Produktliste</button>
-
-    <div class="section-heading-row section-heading-row-spaced">
-      <h2>Packlisten</h2>
-      <button id="btnNewPackliste" class="btn-add-inline" aria-label="Neue Packliste">＋</button>
-    </div>
-    <p id="packlistenLeer" class="hint" hidden>Noch keine Packliste angelegt.</p>
-    <ul id="packlistenListe" class="card-list"></ul>
-  </section>
-</template>
 
 <!-- Vorlage: Formular -->
 <template id="tpl-formular">
@@ -190,6 +161,9 @@
         <label>Einheit
           <input type="text" id="en_einheit" value="Stck" list="en_einheiten" autocomplete="off">
         </label>
+        <label>In Materialdatenbank unter
+          <select id="en_kategorie"></select>
+        </label>
       </div>
       <datalist id="en_einheiten">
         <option value="Stck"></option><option value="m"></option><option value="Pack"></option>
@@ -200,7 +174,7 @@
         <button type="button" class="btn-danger-text" id="en_abbrechen">Abbrechen</button>
       </div>
     </div>
-    <button type="button" class="btn-link-accent" id="btnZuStandardOeffnen" hidden>+ Zu Standardmaterial übernehmen</button>
+    <button type="button" class="btn-link-accent" id="btnZuStandardOeffnen" hidden>+ In Materialdatenbank (Standardmaterial) übernehmen</button>
     <div id="standardUebernahmeForm" class="selected-article" hidden>
       <label>Kategorie
         <select id="su_kategorie"></select>
@@ -533,6 +507,7 @@
 <script src="vendor/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="bauaufmass.js"></script>
+<script src="datenbank.js"></script>
 <script src="app.js"></script>
 <script src="cloudsync.js"></script>
 </body>
