@@ -94,7 +94,7 @@
     </details>
 
     <details class="section-card" open>
-      <summary>Materialliste (<span id="anzahlPositionen">0</span>)</summary>
+      <summary><span>Materialliste (<span id="anzahlPositionen">0</span>)</span></summary>
       <div class="table-scroll">
         <table id="materialTabelle">
           <thead>
@@ -122,14 +122,14 @@
 <!-- Wiederverwendbarer Baustein: Material hinzufügen (Tabs Favoriten / Aus Liste / Standardmaterial / Freitext) -->
 <template id="tpl-material-tabs">
   <div class="tabs" role="tablist">
-    <button class="tab" data-tab="favoriten" role="tab">Favoriten</button>
+    <button class="tab" data-tab="favoriten" role="tab">★ Favoriten</button>
     <button class="tab active" data-tab="liste" role="tab">Aus Liste</button>
     <button class="tab" data-tab="standard" role="tab">Standardmaterial</button>
     <button class="tab" data-tab="frei" role="tab">Freitext</button>
   </div>
 
   <div id="tabFavoriten" class="tab-panel" hidden>
-    <p class="hint" id="favoritenLeerHinweis" hidden>Noch keine Favoriten – wird automatisch anhand häufig verwendeter Artikel befüllt, sobald du Material aus „Aus Liste“ oder „Standardmaterial“ hinzufügst.</p>
+    <p class="hint" id="favoritenLeerHinweis" hidden>Noch keine Favoriten. Material mit ☆ markieren (in „Aus Liste“, „Standardmaterial“ oder der Materialdatenbank) – es erscheint dann hier, sortiert nach Häufigkeit der Nutzung.</p>
     <div id="favoritenListe" class="standard-liste"></div>
     <div id="ausgewaehlterArtikelFavorit" class="selected-article" hidden></div>
     <div class="field-grid two-col">
@@ -262,7 +262,7 @@
     </details>
 
     <details class="section-card" open>
-      <summary>Noch zu packen (<span id="packlisteAnzahlOffen">0</span>)</summary>
+      <summary><span>Noch zu packen (<span id="packlisteAnzahlOffen">0</span>)</span></summary>
       <div class="table-scroll">
         <table id="packlisteOffenTabelle">
           <thead>
@@ -281,7 +281,7 @@
     </details>
 
     <details class="section-card" id="packlisteGepacktDetails">
-      <summary>Bereits gepackt (<span id="packlisteAnzahlGepackt">0</span>)</summary>
+      <summary><span>Bereits gepackt (<span id="packlisteAnzahlGepackt">0</span>)</span></summary>
       <div class="table-scroll">
         <table id="packlisteGepacktTabelle">
           <thead>

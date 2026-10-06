@@ -27,7 +27,8 @@ const SYNC_SAMMLUNGEN = [
   // v15: zentrale Materialdatenbank (ersetzt produkte, eigeneArtikel, standardErgaenzungen)
   { name: "kategorien", key: "aufmass_v1_kategorien", typ: "array", id: (x) => x.id, neu: () => ladeDatenbank() },
   { name: "material", key: "aufmass_v1_material", typ: "array", id: (x) => x.id, neu: () => ladeDatenbank() },
-  { name: "favoriten", key: "aufmass_v1_favoriten", typ: "map", neu: () => ladeFavoriten() }
+  { name: "favoriten", key: "aufmass_v1_favoriten", typ: "map", neu: () => ladeFavoriten() },
+  { name: "sterne", key: "aufmass_v1_sterne", typ: "map", neu: () => ladeSterne() } // v16: Favoriten per Stern
 ];
 
 const cloud = {

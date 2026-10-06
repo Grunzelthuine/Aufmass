@@ -44,6 +44,8 @@ function ladeDatenbank() {
   try { dbKategorien = JSON.parse(localStorage.getItem(STORAGE_KEY_KATEGORIEN) || "[]"); } catch (e) { dbKategorien = []; }
   try { dbMaterial = JSON.parse(localStorage.getItem(STORAGE_KEY_MATERIAL) || "[]"); } catch (e) { dbMaterial = []; }
   if (!dbKategorien.some((k) => k.id === KAT_EIGENE)) dbKategorien.push({ id: KAT_EIGENE, name: "Eigene Artikel" });
+  // Systemkategorie, in die (z. B. über ein Auswahlfeld) wieder etwas eingetragen wurde, nicht mehr verstecken
+  dbKategorien = dbKategorien.filter((k) => !(k.versteckt && dbMaterial.some((m) => m.kat === k.id)));
   aktualisiereAbgeleiteteListen();
 }
 
@@ -78,14 +80,40 @@ function systemKategorien() {
   return PRODUKT_KATEGORIEN.map((k) => ({ id: "sys:" + k.key, name: k.b, gruppe: k.gruppe || "Bauaufmaß", system: true, einheit: k.einheit || "Stck", ph: k.ph || "" }));
 }
 
-function alleKategorien() {
-  const frei = dbKategorien.map((k) => ({ ...k, gruppe: "Standardmaterial", system: false }));
+// v16: Systemkategorien können „gelöscht“ (= geleert + ausgeblendet) werden.
+// Gespeichert als { id: "sys:<key>", versteckt: true } in den Kategorien.
+function istVersteckt(katId) {
+  return dbKategorien.some((k) => k.id === katId && k.versteckt);
+}
+
+function alleKategorien(mitVersteckten) {
+  const frei = dbKategorien.filter((k) => !k.id.startsWith("sys:")).map((k) => ({ ...k, gruppe: "Standardmaterial", system: false }));
   frei.sort((a, b) => (a.id === KAT_EIGENE) - (b.id === KAT_EIGENE));
-  return frei.concat(systemKategorien());
+  const sys = systemKategorien().filter((k) => mitVersteckten || !istVersteckt(k.id) || dbMaterial.some((m) => m.kat === k.id));
+  return frei.concat(sys);
 }
 
 function kategorieInfo(katId) {
-  return alleKategorien().find((k) => k.id === katId) || { id: katId, name: "Ohne Kategorie", gruppe: "Standardmaterial", system: false };
+  return alleKategorien(true).find((k) => k.id === katId) || { id: katId, name: "Ohne Kategorie", gruppe: "Standardmaterial", system: false };
+}
+
+// Ganze Kategorie löschen: freie Kategorie samt Einträgen entfernen,
+// Systemkategorie leeren und ausblenden (wird für die Auswahlfelder gebraucht).
+function loescheKategorie(katId) {
+  dbMaterial = dbMaterial.filter((m) => m.kat !== katId);
+  if (katId.startsWith("sys:")) {
+    if (!istVersteckt(katId)) dbKategorien.push({ id: katId, versteckt: true });
+  } else {
+    dbKategorien = dbKategorien.filter((k) => k.id !== katId);
+  }
+  speichereKategorien();
+  speichereMaterial();
+}
+
+function blendeKategorienEin() {
+  dbKategorien = dbKategorien.filter((k) => !k.versteckt);
+  speichereKategorien();
+  aktualisiereAbgeleiteteListen();
 }
 
 function kategorieName(katId) {
@@ -95,7 +123,7 @@ function kategorieName(katId) {
 function legeKategorieAn(name) {
   const n = name.trim();
   if (!n) return null;
-  const vorhanden = dbKategorien.find((k) => k.name.toLowerCase() === n.toLowerCase());
+  const vorhanden = dbKategorien.find((k) => k.name && k.name.toLowerCase() === n.toLowerCase());
   if (vorhanden) return vorhanden;
   let id = katIdAusName(n);
   while (dbKategorien.some((k) => k.id === id) || id.startsWith("sys:")) id += "-2";
@@ -234,6 +262,12 @@ function baueMaterialFormular({ katId, katFest, eintrag, onSave, onCancel }) {
       </div>
     </label>
     <p class="hint pf-hinweis" hidden></p>
+    <label>…oder im Großhandelskatalog suchen (Text)
+      <div class="autocomplete">
+        <input type="search" class="pf-katsuche" placeholder="z. B. Leitungsschutz B16 Hager" autocomplete="off">
+        <ul class="suggest-list pf-treffer" hidden></ul>
+      </div>
+    </label>
     <label>Bezeichnung <input type="text" class="pf-name" autocomplete="off"></label>
     <div class="field-grid two-col">
       <label>Art.-Nr. <input type="text" class="pf-nr" autocomplete="off"></label>
@@ -301,6 +335,45 @@ function baueMaterialFormular({ katId, katFest, eintrag, onSave, onCancel }) {
     }
     pruefe();
   };
+  // v16: Textsuche im Großhandelskatalog (DATANORM), Auswahl übernimmt Bezeichnung, Art.-Nr., EAN, Einheit
+  const katSuche = form.querySelector(".pf-katsuche");
+  const katTreffer = form.querySelector(".pf-treffer");
+  let katTimer = null;
+  const zeigeKatalogTreffer = () => {
+    const q = katSuche.value.trim();
+    katTreffer.innerHTML = "";
+    if (q.length < 2) { katTreffer.hidden = true; return; }
+    if (typeof materialDBReady !== "undefined" && !materialDBReady) {
+      katTreffer.innerHTML = `<li class="no-result">${escapeHtml(materialDBFehler || materialDBStatus)}</li>`;
+      katTreffer.hidden = false;
+      return;
+    }
+    const treffer = sucheMaterial(q, 40).filter((a) => !a._eigen).slice(0, 25);
+    if (!treffer.length) katTreffer.innerHTML = '<li class="no-result">Keine Treffer im Katalog</li>';
+    for (const a of treffer) {
+      const li = document.createElement("li");
+      li.innerHTML = `${escapeHtml(a.b)}<small>Art.-Nr. ${escapeHtml(a.n)}${a.g ? " · EAN " + escapeHtml(a.g) : ""} · ${escapeHtml(a.e)}</small>`;
+      li.addEventListener("click", () => {
+        name.value = a.b;
+        nr.value = a.n;
+        einheit.value = a.e || einheit.value;
+        code.value = a.g || "";
+        katTreffer.hidden = true;
+        katSuche.value = "";
+        hinweis.hidden = false;
+        hinweis.innerHTML = `✓ Aus dem Katalog übernommen: <strong>${escapeHtml(a.b)}</strong> – Bezeichnung kann angepasst werden.`;
+        pruefe();
+      });
+      katTreffer.appendChild(li);
+    }
+    katTreffer.hidden = false;
+  };
+  katSuche.addEventListener("input", () => { clearTimeout(katTimer); katTimer = setTimeout(zeigeKatalogTreffer, 200); });
+  if (typeof materialDBListener !== "undefined") {
+    const l = () => { if (!document.body.contains(katSuche)) { materialDBListener.delete(l); return; } if (!katTreffer.hidden) zeigeKatalogTreffer(); };
+    materialDBListener.add(l);
+  }
+
   form.querySelector(".pf-suchen").addEventListener("click", () => suche(code.value));
   code.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); suche(code.value); } });
   form.querySelector(".pf-scan").addEventListener("click", () => oeffneBarcodeScanner((roh) => suche(roh)));
@@ -449,23 +522,22 @@ function oeffneDatenbank(suchtext) {
           const n = prompt("Kategorie umbenennen:", k.name);
           if (n && n.trim()) { const kk = dbKategorien.find((x) => x.id === k.id); kk.name = n.trim(); speichereKategorien(); aktualisiereAbgeleiteteListen(); render(); }
         });
-        const del = document.createElement("button");
-        del.type = "button";
-        del.className = "btn-mini btn-mini-danger";
-        del.textContent = "✕";
-        del.setAttribute("aria-label", "Kategorie löschen");
-        del.addEventListener("click", () => {
-          const anzahl = dbMaterialDerKategorie(k.id).length;
-          if (!confirm(anzahl ? `Kategorie „${k.name}“ mit ${anzahl} Einträgen löschen?` : `Kategorie „${k.name}“ löschen?`)) return;
-          dbMaterial = dbMaterial.filter((m) => m.kat !== k.id);
-          dbKategorien = dbKategorien.filter((x) => x.id !== k.id);
-          speichereKategorien();
-          speichereMaterial();
-          render();
-        });
         akt.appendChild(ren);
-        akt.appendChild(del);
       }
+      // v16: jede Kategorie komplett löschbar
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn-mini btn-mini-danger";
+      del.textContent = "🗑";
+      del.setAttribute("aria-label", "Ganze Kategorie löschen");
+      del.addEventListener("click", () => {
+        const anzahl = dbMaterialDerKategorie(k.id).length;
+        const zusatz = k.system ? "\n\n(Die Kategorie wird ausgeblendet und kann unten wieder eingeblendet werden.)" : "";
+        if (!confirm(`Ganze Kategorie „${k.name}“${anzahl ? ` mit ${anzahl} Einträgen` : ""} löschen?${zusatz}`)) return;
+        loescheKategorie(k.id);
+        render();
+      });
+      akt.appendChild(del);
       const ul = det.querySelector("ul");
       if (!eintraege.length) {
         const li = document.createElement("li");
@@ -478,11 +550,13 @@ function oeffneDatenbank(suchtext) {
         li.className = "pl-eintrag";
         li.innerHTML = `<div class="info"><strong></strong><small></small></div>
           <span class="komp-aktionen">
+            <button type="button" class="stern-btn" aria-label="Favorit"></button>
             <button type="button" class="btn-mini" aria-label="Bearbeiten">✎</button>
             <button type="button" class="btn-mini btn-mini-danger" aria-label="Löschen">✕</button>
           </span>`;
         li.querySelector("strong").textContent = m.name;
         li.querySelector("small").textContent = [m.einheit || "Stck", m.nr && `Art.-Nr. ${m.nr}`, m.ean && `EAN ${m.ean}`].filter(Boolean).join(" · ");
+        bindeSternKnopf(li.querySelector(".stern-btn"), sternDatenFuerDb(m));
         li.querySelector('[aria-label="Bearbeiten"]').addEventListener("click", () => {
           const platz = document.createElement("li");
           platz.appendChild(baueMaterialFormular({
@@ -503,7 +577,16 @@ function oeffneDatenbank(suchtext) {
     }
     info.textContent = worte.length
       ? `${sichtbar} Treffer`
-      : `${dbMaterial.length} Einträge in ${alleKategorien().length} Kategorien. Kategorie antippen zum Aufklappen.`;
+      : `${dbMaterial.length} Einträge in ${alleKategorien().length} Kategorien. Kategorie antippen zum Aufklappen, ☆ = zu Favoriten.`;
+    const versteckt = dbKategorien.filter((k) => k.versteckt).length;
+    if (versteckt && !worte.length) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn-link-accent";
+      b.textContent = `${versteckt} gelöschte Bauaufmaß-Kategorie${versteckt === 1 ? "" : "n"} wieder einblenden`;
+      b.addEventListener("click", () => { blendeKategorienEin(); render(); });
+      liste.appendChild(b);
+    }
   };
   let t = null;
   suche.addEventListener("input", () => { clearTimeout(t); t = setTimeout(render, 150); });

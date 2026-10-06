@@ -158,10 +158,80 @@ function registriereFavoritTreffer(quelle, artikelnummer, bezeichnung, einheit) 
   speichereFavoriten();
 }
 
-function topFavoriten(limit = 20) {
-  return Object.values(favoritenCounts)
-    .sort((a, b) => b.count - a.count)
-    .slice(0, limit);
+/* ---------- Favoriten per Stern (v16) ----------
+   In die Favoriten kommt nur, was mit ☆ markiert wurde (Materialdatenbank,
+   Standardmaterial, Aus Liste). Sortiert nach Nutzungshäufigkeit
+   (favoritenCounts, zählt weiterhin jedes Hinzufügen). */
+const STORAGE_KEY_STERNE = "aufmass_v1_sterne";
+let sterne = {}; // key -> { quelle, artikelnummer, bezeichnung, einheit }
+
+function ladeSterne() {
+  try { sterne = JSON.parse(localStorage.getItem(STORAGE_KEY_STERNE) || "{}") || {}; }
+  catch (e) { sterne = {}; }
+}
+
+function speichereSterne() {
+  try { localStorage.setItem(STORAGE_KEY_STERNE, JSON.stringify(sterne)); }
+  catch (e) { console.error("Favoriten konnten nicht gespeichert werden", e); }
+}
+
+function istStern(key) { return !!sterne[key]; }
+
+function toggleStern(d) {
+  if (sterne[d.key]) delete sterne[d.key];
+  else sterne[d.key] = { quelle: d.quelle, artikelnummer: d.artikelnummer || "", bezeichnung: d.bezeichnung, einheit: d.einheit || "Stck" };
+  speichereSterne();
+  return !!sterne[d.key];
+}
+
+function sternDatenFuerDb(m) {
+  return { key: "standard:" + m.name, quelle: "standard", artikelnummer: m.nr || "", bezeichnung: m.name, einheit: m.einheit || "Stck" };
+}
+
+function sternDatenFuerStandard(item) {
+  return { key: "standard:" + item.b, quelle: "standard", artikelnummer: item.n || "", bezeichnung: item.b, einheit: item.e };
+}
+
+function sternDatenFuerKatalog(item) {
+  if (item._dbId) return sternDatenFuerStandard(item);
+  return { key: "liste:" + item.n, quelle: "liste", artikelnummer: item.n, bezeichnung: item.b, einheit: item.e };
+}
+
+// Stern-Knopf (☆/★); onChange optional
+function bindeSternKnopf(btn, daten, onChange) {
+  const zeichne = () => {
+    const an = istStern(daten.key);
+    btn.textContent = an ? "★" : "☆";
+    btn.classList.add("stern-btn");
+    btn.classList.toggle("aktiv", an);
+    btn.setAttribute("aria-label", an ? "Aus Favoriten entfernen" : "Zu Favoriten hinzufügen");
+  };
+  zeichne();
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    toggleStern(daten);
+    zeichne();
+    if (onChange) onChange();
+  });
+  return btn;
+}
+
+function neuerSternKnopf(daten, onChange) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  return bindeSternKnopf(btn, daten, onChange);
+}
+
+function nutzung(key) {
+  return (favoritenCounts[key] && favoritenCounts[key].count) || 0;
+}
+
+// Favoriten = nur Sterne, nach Häufigkeit der Nutzung (viel -> wenig)
+function topFavoriten() {
+  return Object.entries(sterne)
+    .map(([key, d]) => ({ key, ...d, count: nutzung(key) }))
+    .sort((a, b) => b.count - a.count || a.bezeichnung.localeCompare(b.bezeichnung, "de"));
 }
 
 /* ---------- Standardmaterial (v15) ----------
@@ -805,21 +875,23 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     selectedFavoritArtikel = item;
     einheitFavorit.value = item.einheit;
     ausgewaehltFavorit.hidden = false;
-    const subInfo = item.quelle === "liste" && item.artikelnummer ? `Art.-Nr. ${escapeHtml(item.artikelnummer)} · ` : "";
+    const subInfo = item.artikelnummer ? `Art.-Nr. ${escapeHtml(item.artikelnummer)} · ` : "";
     ausgewaehltFavorit.innerHTML = `<strong>${escapeHtml(item.bezeichnung)}</strong><span class="muted">${subInfo}${escapeHtml(item.einheit)}</span>`;
     mengeFavorit.focus();
     aktualisiereAddFavoritButton();
   }
 
   function renderFavoritenListe() {
-    const top = topFavoriten(20);
+    const top = topFavoriten();
     favoritenListeEl.innerHTML = "";
     favoritenLeerHinweis.hidden = top.length !== 0;
     for (const item of top) {
       const row = document.createElement("div");
-      row.className = "artikel-zeile";
-      const subInfo = item.quelle === "liste" && item.artikelnummer ? `Art.-Nr. ${escapeHtml(item.artikelnummer)} · ` : "";
-      row.innerHTML = `${escapeHtml(item.bezeichnung)}<small>${subInfo}${escapeHtml(item.einheit)}</small>`;
+      row.className = "artikel-zeile mit-stern";
+      const subInfo = item.artikelnummer ? `Art.-Nr. ${escapeHtml(item.artikelnummer)} · ` : "";
+      const nutz = item.count ? ` · ${item.count}× verwendet` : " · noch nicht verwendet";
+      row.innerHTML = `<div class="zeile-text">${escapeHtml(item.bezeichnung)}<small>${subInfo}${escapeHtml(item.einheit)}${nutz}</small></div>`;
+      row.appendChild(neuerSternKnopf(item, () => setTimeout(renderFavoritenListe, 250)));
       row.addEventListener("click", () => waehleFavorit(item));
       favoritenListeEl.appendChild(row);
     }
@@ -834,7 +906,7 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     material.push({
       id: neueId(),
       bezeichnung: selectedFavoritArtikel.bezeichnung,
-      artikelnummer: selectedFavoritArtikel.quelle === "liste" ? selectedFavoritArtikel.artikelnummer : "",
+      artikelnummer: selectedFavoritArtikel.artikelnummer || "",
       einheit: selectedFavoritArtikel.einheit,
       menge,
       quelle: selectedFavoritArtikel.quelle,
@@ -957,7 +1029,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     ergebnisListe.hidden = true;
     einheitListe.value = item.e;
     ausgewaehlt.hidden = false;
-    ausgewaehlt.innerHTML = `<strong>${escapeHtml(item.b)}</strong><span class="muted">${artikelInfo(item)}</span>`;
+    ausgewaehlt.innerHTML = `<div class="ausgewaehlt-mit-stern"><div><strong>${escapeHtml(item.b)}</strong><span class="muted">${artikelInfo(item)}</span></div></div>`;
+    ausgewaehlt.querySelector(".ausgewaehlt-mit-stern").appendChild(neuerSternKnopf(sternDatenFuerKatalog(item)));
     btnZuStandardOeffnen.hidden = false;
     standardUebernahmeForm.hidden = true;
     mengeListe.focus();
@@ -992,7 +1065,9 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
     }
     for (const item of treffer) {
       const li = document.createElement("li");
-      li.innerHTML = `${escapeHtml(item.b)}<small>${artikelInfo(item)}</small>`;
+      li.className = "mit-stern";
+      li.innerHTML = `<div class="zeile-text">${escapeHtml(item.b)}<small>${artikelInfo(item)}</small></div>`;
+      li.appendChild(neuerSternKnopf(sternDatenFuerKatalog(item)));
       li.addEventListener("click", () => waehleArtikel(item));
       ergebnisListe.appendChild(li);
     }
@@ -1018,7 +1093,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
       quelle: "liste",
       erledigt: false
     });
-    registriereFavoritTreffer("liste", selectedArtikel.n, selectedArtikel.b, selectedArtikel.e);
+    if (selectedArtikel._dbId) registriereFavoritTreffer("standard", selectedArtikel.n, selectedArtikel.b, selectedArtikel.e);
+    else registriereFavoritTreffer("liste", selectedArtikel.n, selectedArtikel.b, selectedArtikel.e);
     // Reset
     selectedArtikel = null;
     sucheInput.value = "";
@@ -1178,9 +1254,10 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
         letzteKategorie = item.k;
       }
       const row = document.createElement("div");
-      row.className = "artikel-zeile";
+      row.className = "artikel-zeile mit-stern";
       const nrHinweis = item.n ? ` · Art.-Nr. ${escapeHtml(item.n)}` : (item.g ? ` · EAN ${escapeHtml(item.g)}` : "");
-      row.innerHTML = `${escapeHtml(item.b)}<small>${escapeHtml(item.e)}${nrHinweis}</small>`;
+      row.innerHTML = `<div class="zeile-text">${escapeHtml(item.b)}<small>${escapeHtml(item.e)}${nrHinweis}</small></div>`;
+      row.appendChild(neuerSternKnopf(sternDatenFuerStandard(item)));
       row.addEventListener("click", () => waehleStandardArtikel(item));
       standardListeEl.appendChild(row);
       treffer++;
@@ -1606,6 +1683,7 @@ ladeListe();
 ladePacklisten();
 ladeBauaufmasse();
 ladeFavoriten();
+ladeSterne();
 ladeDatenbank();
 ladeMaterialDB();
 zeigeStart();

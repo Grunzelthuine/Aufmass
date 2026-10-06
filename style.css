@@ -728,3 +728,24 @@ main#app { padding-top: calc(var(--header-h) + var(--safe-top) + 14px); }
 .stripe-box { border: 1px dashed #b9cdf0; border-radius: 8px; padding: 6px 8px; background: #fff; }
 .stripe-kopf { display: flex; justify-content: space-between; align-items: center; font-size: 0.86rem; font-weight: 600; color: var(--color-primary); }
 .stripes .btn-link-accent { align-self: flex-start; }
+
+/* v16: Favoriten-Stern */
+.stern-btn {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  color: #9aa4b2;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.stern-btn.aktiv { color: var(--color-accent); }
+.mit-stern { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.mit-stern .zeile-text { flex: 1; min-width: 0; }
+.ausgewaehlt-mit-stern { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.produkt-form .autocomplete { position: relative; }
