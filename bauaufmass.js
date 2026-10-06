@@ -427,6 +427,8 @@ function raumZusammenfassung(raum) {
   if (nR) teile.push(`${nR} Rollo${nR === 1 ? "" : "s"}`);
   const nK = (raum.knx || []).reduce((s, k) => s + (k.anzahl || 0), 0);
   if (nK) teile.push(`${nK} KNX`);
+  const nMe = (raum.melder || []).reduce((s, k) => s + (k.anzahl || 0), 0);
+  if (nMe) teile.push(`${nMe} Melder`);
   const nP = Object.values(raum.positionen).reduce((s, v) => s + (v > 0 ? v : 0), 0);
   if (nP) teile.push(`${nP} Anschl./Geräte`);
   const nM = raum.material.filter((m) => m.menge > 0).length;
@@ -1113,6 +1115,10 @@ function oeffneRaum(etage, raum) {
     leerText: `Standard des Bauaufmaßes (${std || "keine Angabe"})`,
     onChange: ({ name }) => { raum.abdeckung = name; autosave(); renderSchaltungen(); renderRollos(); renderAbw(); }
   }));
+
+  // Diktat (v17)
+  const diktatPlatz = document.getElementById("r_diktat");
+  if (diktatPlatz && typeof baueDiktatKarte === "function") diktatPlatz.appendChild(baueDiktatKarte(etage, raum));
 
   // Beleuchtung
   renderSchaltungen();

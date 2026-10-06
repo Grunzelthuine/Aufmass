@@ -1,6 +1,6 @@
 // Service Worker für Material-Aufmaß App
 // Versionsnummer bei jedem Deploy mit Inhaltsänderungen erhöhen, damit Nutzer die neue Version bekommen.
-const CACHE_VERSION = "aufmass-v16";
+const CACHE_VERSION = "aufmass-v17";
 // Eigener Cache für den großen DATANORM-Katalog (~125 MB). Wird bei
 // App-Updates NICHT gelöscht, damit nicht bei jeder neuen App-Version der
 // komplette Katalog erneut heruntergeladen werden muss. Die Chunk-URLs
@@ -12,6 +12,7 @@ const CORE_ASSETS = [
   "./style.css",
   "./app.js",
   "./bauaufmass.js",
+  "./diktat.js",
   "./datenbank.js",
   "./cloudsync.js",
   "./firebase-config.js",

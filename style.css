@@ -749,3 +749,12 @@ main#app { padding-top: calc(var(--header-h) + var(--safe-top) + 14px); }
 .mit-stern .zeile-text { flex: 1; min-width: 0; }
 .ausgewaehlt-mit-stern { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .produkt-form .autocomplete { position: relative; }
+
+/* v17: Diktat im Raum */
+.diktat-karte textarea { min-height: 84px; font-size: 1rem; }
+.diktat-karte .action-bar { margin-top: 8px; }
+.diktat-vorschau { margin-top: 8px; border-top: 1px dashed var(--color-border); padding-top: 8px; }
+.diktat-liste { list-style: none; margin: 6px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 0.92rem; }
+.diktat-liste li { color: #1d6b3a; }
+.diktat-liste small { display: block; color: #8a5a00; font-size: 0.78rem; margin-left: 16px; }
+.diktat-unbekannt { color: var(--color-danger); font-size: 0.85rem; margin: 4px 0 8px; }
