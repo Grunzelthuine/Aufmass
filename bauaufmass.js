@@ -360,9 +360,17 @@ function neueKomponente(typ, werte) {
   return Object.assign(item, werte || {});
 }
 
+/* v18: Installationsart. Bauaufmaß: "konventionell" | "knx";
+   Raum: "" (wie Bauaufmaß) | "konventionell" | "knx". In KNX-Räumen gibt es
+   nur KNX-Schaltungen, Rollos nur mit Anzahl (je Rollo ein Aktorkanal). */
+function istKnxRaum(b, raum) {
+  return ((raum && raum.installation) || (b && b.installation) || "konventionell") === "knx";
+}
+
 function migriereBauaufmass(b) {
   if (!Array.isArray(b.verteilungen)) b.verteilungen = [];
   if (!b.abdeckung || typeof b.abdeckung !== "object") b.abdeckung = { standard: "", rahmen: false };
+  if (b.installation !== "knx") b.installation = "konventionell"; // v18
   b.etagen.forEach((e) => e.raeume.forEach(migriereRaum));
 }
 
@@ -869,8 +877,11 @@ function oeffneBauaufmass(b, scrollY) {
     el.value = getter();
     el.addEventListener("input", (e) => { setter(e.target.value); autosave(); });
   }
-  // Abdeckung / Rahmen (v12)
+  // Installationsart (v18)
   const abdPlatz = document.getElementById("b_abdeckung");
+  abdPlatz.appendChild(baueSegment("Installationsart (gilt für alle Räume, je Raum änderbar)", [{ key: "konventionell", b: "Konventionell" }, { key: "knx", b: "KNX" }],
+    b.installation, (v) => { b.installation = v; autosave(); }));
+  // Abdeckung / Rahmen (v12)
   abdPlatz.appendChild(baueProduktAuswahl({
     kat: "abdeckung", wert: b.abdeckung.standard, leerText: "– keine Angabe –", label: "Standard-Abdeckung / Schalterprogramm",
     onChange: ({ name }) => { b.abdeckung.standard = name; autosave(); }
@@ -1116,21 +1127,43 @@ function oeffneRaum(etage, raum) {
     onChange: ({ name }) => { raum.abdeckung = name; autosave(); renderSchaltungen(); renderRollos(); renderAbw(); }
   }));
 
+  // Installationsart des Raums (v18)
+  const knxRaum = istKnxRaum(b, raum);
+  const instPlatz = document.createElement("div");
+  instPlatz.className = "raum-installation";
+  instPlatz.appendChild(baueSegment("Installation in diesem Raum", [
+    { key: "", b: `Wie Bau (${b.installation === "knx" ? "KNX" : "konv."})` },
+    { key: "konventionell", b: "Konventionell" },
+    { key: "knx", b: "KNX" }
+  ], raum.installation || "", (v) => {
+    raum.installation = v;
+    autosave();
+    const y = window.scrollY;
+    oeffneRaum(etage, raum);
+    window.scrollTo(0, y);
+  }));
+  document.getElementById("r_abdeckung").before(instPlatz);
+
   // Diktat (v17)
   const diktatPlatz = document.getElementById("r_diktat");
   if (diktatPlatz && typeof baueDiktatKarte === "function") diktatPlatz.appendChild(baueDiktatKarte(etage, raum));
 
   // Beleuchtung
   renderSchaltungen();
+  // In KNX-Räumen nur KNX-Schaltungen (direkt mit Art wählbar)
+  const schaltOptionen = knxRaum
+    ? BAU_KNX_LICHTARTEN.map((a) => ({ value: "knx:" + a, text: "KNX – " + a }))
+    : BAU_SCHALTUNGSTYPEN.map((t) => ({ value: t.key, text: t.b }));
   document.getElementById("r_schaltungAuswahl").appendChild(baueAuswahl({
-    platzhalter: "＋ Schaltung hinzufügen…",
-    gruppen: [{ optionen: BAU_SCHALTUNGSTYPEN.map((t) => ({ value: t.key, text: t.b })) }],
+    platzhalter: knxRaum ? "＋ KNX-Schaltung hinzufügen…" : "＋ Schaltung hinzufügen…",
+    gruppen: [{ optionen: schaltOptionen }],
     frei: null,
-    onAdd: (key) => {
-      const t = schaltungTyp(key);
+    onAdd: (wahl) => {
+      const knxArt = wahl.startsWith("knx:") ? wahl.slice(4) : null;
+      const t = schaltungTyp(knxArt ? "knx" : wahl);
       const s = { id: neueId(), typ: t.key, schaltstellen: t.min, wand: 0, decke: 0, steckdose: 0, strahler: 0, bemerkung: "" };
       if (t.melder) Object.assign(s, { melderArt: "praesenz", melderAnzahl: 1, melderTyp: "", melderNr: "" });
-      if (t.knx) s.knxArt = "Schalten";
+      if (t.knx) s.knxArt = knxArt || "Schalten";
       s.stripes = [];
       raum.schaltungen.push(s);
       autosave();
@@ -1429,6 +1462,18 @@ function renderRollos() {
       document.getElementById("r_anzahlRollos").textContent = raum.rollos.reduce((s, x) => s + x.anzahl, 0);
       autosave();
     }));
+    if (istKnxRaum(currentBauaufmass, raum)) {
+      // KNX: keine Bedienung vor Ort – je Rollo ein Jalousiekanal im Aktor
+      karte.querySelector("strong").textContent = `${i + 1}. Rollo (KNX)`;
+      const h = document.createElement("p");
+      h.className = "hint";
+      h.style.padding = "2px 0 4px";
+      h.textContent = "KNX: nur Anzahl – keine Schalter/Taster vor Ort.";
+      karte.querySelector(".rollo-seg").appendChild(h);
+      karte.appendChild(baueTextFeld("Bemerkung (optional, z. B. Terrassentür, Gruppe Süd)", r.bemerkung, (v) => { r.bemerkung = v; autosave(); }));
+      liste.appendChild(karte);
+      return;
+    }
     const bedienAnzahlEl = karte.querySelector(".rollo-bedien-anzahl");
     const zeigeBedienAnzahl = () => {
       bedienAnzahlEl.innerHTML = "";
@@ -1611,10 +1656,11 @@ function bauRaumZeilen(b, raum) {
   const rollos = (raum.rollos || []).filter((r) => r.anzahl > 0);
   if (rollos.length) {
     zeilen.push({ gruppe: "Rollos" });
+    const knxR = istKnxRaum(b, raum);
     rollos.forEach((r) => {
-      const bd = rolloBedienung(r.bedienung);
+      const bd = knxR ? rolloBedienung("keine") : rolloBedienung(r.bedienung);
       const bem = (r.bemerkung || "").trim();
-      const zusatz = bd.key === "keine" ? " (ohne Schalter/Taster)" : "";
+      const zusatz = knxR ? " (KNX)" : bd.key === "keine" ? " (ohne Schalter/Taster)" : "";
       zeilen.push({ b: "Rollo" + zusatz + (bem ? ` – ${bem}` : ""), menge: r.anzahl, e: "Stck", schaltung: true });
       if (bd.mat && r.bedienAnzahl > 0) zeilen.push({ b: bd.mat + eigeneAbd(r), menge: r.bedienAnzahl, e: "Stck", unter: true });
     });
@@ -1721,8 +1767,13 @@ function bauGesamtZeilen(b) {
         });
         for (const x of s.stripes || []) if (x.meter > 0) stripes.add(stripeZeile(x), x.meter, "m", x.nr);
       }
+      const knxR = istKnxRaum(b, raum);
       for (const r of raum.rollos || []) {
         if (!(r.anzahl > 0)) continue;
+        if (knxR) {
+          rollo.add("Rollo (KNX)", r.anzahl, "Stck", "", 0);
+          continue;
+        }
         rollo.add("Rollo", r.anzahl, "Stck", "", 0);
         const bd = rolloBedienung(r.bedienung);
         if (bd.mat) rollo.add(mitAbdeckung(bd.mat, positionsAbdeckung(b, raum, r.abdeckung)), r.bedienAnzahl || 0, "Stck", "", bd.key === "schalter" ? 1 : 2);

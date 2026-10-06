@@ -809,7 +809,7 @@ function bindeFormularEvents() {
   bindeMaterialAuswahl(a.material, () => {
     renderMaterialTabelle();
     autosave();
-  });
+  }, { diktat: true });
 
   // Löschen / PDF
   document.getElementById("btnLoeschen").addEventListener("click", () => {
@@ -842,7 +842,11 @@ function klonMaterialTabs(platzhalterId) {
    werden (currentAufmass.material oder currentPackliste.material).
    `onHinzufuegen` wird nach jedem erfolgreichen Hinzufügen aufgerufen
    (übernimmt Re-Rendering + Autosave beim Aufrufer). */
-function bindeMaterialAuswahl(material, onHinzufuegen) {
+function bindeMaterialAuswahl(material, onHinzufuegen, optionen) {
+  // v18: Tab „Diktat“ (nur Aufmaß und Packliste)
+  const diktatTab = document.querySelector('.tab[data-tab="diktat"]');
+  if (diktatTab) diktatTab.hidden = !(optionen && optionen.diktat);
+  if (optionen && optionen.diktat && typeof bindeMaterialDiktat === "function") bindeMaterialDiktat(material, onHinzufuegen);
   // Tabs
   const tabs = document.querySelectorAll(".tab");
   tabs.forEach((tab) => {
@@ -854,6 +858,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen) {
       document.getElementById("tabListe").hidden = ziel !== "liste";
       document.getElementById("tabStandard").hidden = ziel !== "standard";
       document.getElementById("tabFrei").hidden = ziel !== "frei";
+      const td = document.getElementById("tabDiktat");
+      if (td) td.hidden = ziel !== "diktat";
       if (ziel === "favoriten") renderFavoritenListe();
     });
   });
@@ -1484,7 +1490,7 @@ function bindePacklisteEvents() {
   bindeMaterialAuswahl(p.material, () => {
     renderPacklisteMaterial();
     autosave();
-  });
+  }, { diktat: true });
 
   document.getElementById("btnPacklisteLoeschen").addEventListener("click", () => {
     if (!confirm("Diese Packliste wirklich löschen?")) return;

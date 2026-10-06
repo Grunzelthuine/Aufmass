@@ -126,6 +126,7 @@
     <button class="tab active" data-tab="liste" role="tab">Aus Liste</button>
     <button class="tab" data-tab="standard" role="tab">Standardmaterial</button>
     <button class="tab" data-tab="frei" role="tab">Freitext</button>
+    <button class="tab" data-tab="diktat" role="tab" hidden>🎤 Diktat</button>
   </div>
 
   <div id="tabFavoriten" class="tab-panel" hidden>
@@ -223,6 +224,13 @@
       </label>
     </div>
     <button class="btn btn-secondary" id="btnAddStandard" disabled>Hinzufügen</button>
+  </div>
+
+  <div id="tabDiktat" class="tab-panel" hidden>
+    <textarea id="md_text" rows="3" placeholder="Ins Feld tippen, Mikrofon der Tastatur antippen und sprechen, z. B.: 20 Meter NYM 3x1,5, 10 Abzweigdosen, 5 Wago Klemmen"></textarea>
+    <button class="btn btn-secondary" id="md_hinzufuegen" disabled>Erkennen und hinzufügen</button>
+    <p class="hint" style="padding:0">Gesuchtes Material kommt aus der Materialdatenbank (inkl. Favoriten); was nicht gefunden wird, wird als Freitext übernommen.</p>
+    <div id="md_ergebnis" class="diktat-vorschau" hidden></div>
   </div>
 
   <div id="tabFrei" class="tab-panel" hidden>
@@ -341,7 +349,7 @@
     </details>
 
     <details class="section-card" open>
-      <summary>Abdeckung &amp; Rahmen</summary>
+      <summary>Installation, Abdeckung &amp; Rahmen</summary>
       <div id="b_abdeckung" class="abdeckung-einstellung"></div>
       <p class="hint">Gilt für Steckdosen, Schalter/Taster, Datendosen, Blindabdeckungen und Rahmen. Abweichungen je Raum oder je Position im Raum möglich.</p>
     </details>

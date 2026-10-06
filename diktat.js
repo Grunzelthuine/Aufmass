@@ -282,6 +282,33 @@ function diktatPositionsName(key) {
   return positionNachKey(key).b;
 }
 
+/* v18: In KNX-Räumen werden genannte konventionelle Schaltungen zu KNX-Schaltungen
+   (Dimmer -> Dimmen, sonst Schalten), Handautomatik-Melder zu KNX-Meldern,
+   Rollos ohne Schalter/Taster. */
+function diktatAlsKnx(erg) {
+  const neu = [];
+  for (const a of erg.aktionen) {
+    if (a.art === "schaltung" && a.typ !== "knx") {
+      const vorher = a.typ;
+      a.knxArt = vorher === "dimmer" || vorher === "wechseldimmer" ? "Dimmen" : "Schalten";
+      a.typ = "knx";
+      delete a.schaltstellen;
+      if (a.angenommen) a.hinweis = "Schaltungsart nicht genannt – KNX Schalten angenommen";
+      delete a.angenommen;
+      if (a.melderArt) {
+        neu.push(a, { art: "knx", typ: a.melderArt === "bewegung" ? "bewegung" : "praesenz", anzahl: a.melderAnzahl || 1 });
+        delete a.melderArt;
+        delete a.melderAnzahl;
+        continue;
+      }
+    }
+    if (a.art === "rollo") { a.bedienung = "keine"; a.bedienAnzahl = 1; a.knx = true; }
+    neu.push(a);
+  }
+  erg.aktionen = neu;
+  return erg;
+}
+
 // Lesbare Vorschau-Zeilen
 function diktatVorschau(ergebnis) {
   const zeilen = [];
@@ -294,11 +321,11 @@ function diktatVorschau(ergebnis) {
       if (a.knxArt) teile.push(a.knxArt);
       for (const x of BAU_AUSLAESSE) if (a.auslaesse[x.key]) teile.push(`${a.auslaesse[x.key]}× ${x.b}`);
       for (const m of a.stripes) teile.push(`LED-Stripe ${String(m).replace(".", ",")} m`);
-      zeilen.push({ text: `${t.b}${teile.length ? ": " + teile.join(", ") : ""}`, hinweis: a.angenommen ? "Schaltungsart nicht genannt – Ausschaltung angenommen" : "" });
+      zeilen.push({ text: `${t.b}${teile.length ? ": " + teile.join(", ") : ""}`, hinweis: a.angenommen ? "Schaltungsart nicht genannt – Ausschaltung angenommen" : (a.hinweis || "") });
     } else if (a.art === "position") {
       zeilen.push({ text: `${a.anzahl}× ${diktatPositionsName(a.key)}`, hinweis: a.annahme || "" });
     } else if (a.art === "rollo") {
-      const bd = a.bedienung === "keine" ? "ohne Schalter/Taster" : `mit ${a.bedienAnzahl}× ${a.bedienung === "schalter" ? "Schalter" : "Taster"}`;
+      const bd = a.knx ? "(KNX)" : a.bedienung === "keine" ? "ohne Schalter/Taster" : `mit ${a.bedienAnzahl}× ${a.bedienung === "schalter" ? "Schalter" : "Taster"}`;
       zeilen.push({ text: `${a.anzahl}× Rollo ${bd}` });
     } else if (a.art === "melder") {
       zeilen.push({ text: `${a.anzahl}× ${komponentenTyp(MELDER_TYPEN, a.typ).b}` });
@@ -368,6 +395,7 @@ function baueDiktatKarte(etage, raum) {
   btnLeer.addEventListener("click", () => { ta.value = ""; vorschau.hidden = true; aktualisiere(); });
   btnAus.addEventListener("click", () => {
     const erg = werteDiktatAus(ta.value);
+    if (istKnxRaum(currentBauaufmass, raum)) diktatAlsKnx(erg);
     const zeilen = diktatVorschau(erg);
     vorschau.hidden = false;
     vorschau.innerHTML = "";
@@ -415,3 +443,213 @@ function baueDiktatKarte(etage, raum) {
   });
   return karte;
 }
+
+/* ============================================================
+   Material-Diktat im normalen Aufmaß / in der Packliste (v18)
+   „20 Meter NYM 3x1,5, 10 Abzweigdosen, 5 Wago 221-413“ ->
+   je Teil Menge + Einheit + Text; Text wird in der Materialdatenbank
+   (inkl. Favoriten) gesucht. Treffer -> Datenbank-Artikel, sonst Freitext.
+   Wird direkt hinzugefügt (mit „Rückgängig“).
+   ============================================================ */
+
+function materialNorm(s) {
+  return String(s || "").toLowerCase()
+    .replace(/\b(ein|zwei|drei|vier|fünf)[- ]?polig/g, (m, z) => DIKTAT_ZAHLWORTE[z] + "-polig")
+    .replace(/(\d)\s*[x×]\s*(\d)/g, "$1x$2")
+    .replace(/(\d),(\d)/g, "$1.$2")
+    .replace(/[^a-z0-9äöüß.x\- ]/g, " ")
+    .replace(/\s+/g, " ").trim();
+}
+
+// einfache Grundform: Plural-/Kasusendungen abschneiden
+function materialStamm(w) {
+  if (/\d/.test(w) || w.length <= 4) return w;
+  return w.replace(/(innen|ern|en|er|es|e|n|s)$/, "");
+}
+
+const MATERIAL_EINHEITEN = [
+  { re: /^(m|meter|metern)$/, e: "m" },
+  { re: /^(stück|stk|st|stck)$/, e: "Stk" },
+  { re: /^(rollen?|ring|ringe)$/, e: "Rolle" },
+  { re: /^(pack|packung|packungen|pck|pakete?)$/, e: "Pack" },
+  { re: /^(kartons?)$/, e: "Karton" },
+  { re: /^(sätze|satz)$/, e: "Satz" },
+  { re: /^(paar)$/, e: "Paar" }
+];
+
+function materialZahl(w) {
+  if (/^\d+(\.\d+)?$/.test(w)) return parseFloat(w);
+  if (DIKTAT_ZAHLWORTE[w] !== undefined) return DIKTAT_ZAHLWORTE[w];
+  return null;
+}
+
+function zerlegeMaterialDiktat(text) {
+  let t = " " + String(text || "").replace(/\n/g, ", ") + " ";
+  t = t.replace(/(\d)\s*,\s*(\d)/g, "$1#KOMMA#$2");          // Dezimalkomma schützen
+  const teile = t.split(/,|;|\.\s|\.$|\s+und\s+|\s+sowie\s+|\s+dann\s+|\s+plus\s+/i)
+    .map((x) => x.replace(/#KOMMA#/g, ",").trim()).filter(Boolean);
+  const ergebnis = [];
+  for (const teil of teile) {
+    let worte = teil.split(/\s+/);
+    let menge = null, einheit = "";
+    const w0 = worte[0] ? worte[0].toLowerCase().replace(",", ".") : "";
+    if (materialZahl(w0) !== null) {
+      menge = materialZahl(w0);
+      worte = worte.slice(1);
+      const ein = worte[0] && MATERIAL_EINHEITEN.find((x) => x.re.test(worte[0].toLowerCase()));
+      if (ein) { einheit = ein.e; worte = worte.slice(1); }
+    } else if (worte.length >= 2) {
+      // Menge am Ende: „NYM 3x1,5 20 Meter“
+      const l = worte[worte.length - 1].toLowerCase();
+      const v = worte[worte.length - 2].toLowerCase().replace(",", ".");
+      const ein = MATERIAL_EINHEITEN.find((x) => x.re.test(l));
+      if (ein && materialZahl(v) !== null) { menge = materialZahl(v); einheit = ein.e; worte = worte.slice(0, -2); }
+    }
+    while (worte.length && /^(x|mal|stück|stk)$/i.test(worte[0])) worte = worte.slice(1);
+    const rest = worte.join(" ").trim();
+    if (!rest) continue;
+    ergebnis.push({ menge: menge !== null ? menge : 1, einheit, text: rest });
+  }
+  return ergebnis;
+}
+
+// Kandidaten: Materialdatenbank + Favoriten aus dem Katalog
+function materialKandidaten() {
+  const liste = standardMaterialDB.map((x) => ({ b: x.b, e: x.e, n: x.n || "", quelle: "standard", s: materialNorm(x.b + " " + (x.n || "")) }));
+  liste.forEach((k) => (k.w = k.s.split(" ")));
+  for (const [key, d] of Object.entries(typeof sterne !== "undefined" ? sterne : {})) {
+    if (d.quelle === "liste") {
+      const sx = materialNorm(d.bezeichnung + " " + (d.artikelnummer || ""));
+      liste.push({ b: d.bezeichnung, e: d.einheit, n: d.artikelnummer || "", quelle: "liste", s: sx, w: sx.split(" ") });
+    }
+  }
+  return liste;
+}
+
+function findeMaterialTreffer(text, kandidaten) {
+  const q = materialNorm(text).split(" ").filter((w) => w.length >= 2 || /\d/.test(w));
+  if (!q.length) return null;
+  let best = null;
+  for (const k of kandidaten) {
+    let punkte = 0, zahlenOk = true;
+    for (const w of q) {
+      const st = materialStamm(w);
+      // Wortanfang muss passen (sonst trifft z. B. „FI“ auf „Profil“); längere Wörter auch innerhalb (Panzer-rohr)
+      const passt = k.w.some((cw) => cw.startsWith(w) || (st.length >= 3 && cw.startsWith(st)) ||
+        (w.length >= 5 && cw.includes(w)) || (st.length >= 5 && cw.includes(st)));
+      if (passt) punkte++;
+      else if (/\d/.test(w)) zahlenOk = false;   // Maße/Typen müssen passen
+    }
+    if (!zahlenOk) continue;
+    const quote = punkte / q.length;
+    if (quote < 0.6) continue;
+    const nutz = typeof nutzung === "function" ? nutzung((k.quelle === "liste" ? "liste:" + k.n : "standard:" + k.b)) : 0;
+    const wert = quote * 100 + Math.min(nutz, 20) - k.b.length / 100;
+    if (!best || wert > best.wert) best = { ...k, wert, quote };
+  }
+  return best;
+}
+
+function erkenneMaterialDiktat(text) {
+  const kandidaten = materialKandidaten();
+  return zerlegeMaterialDiktat(text).map((p) => {
+    const t = findeMaterialTreffer(p.text, kandidaten);
+    if (t) return { menge: p.menge, einheit: p.einheit || t.e || "Stk", bezeichnung: t.b, artikelnummer: t.n, quelle: t.quelle, treffer: true, gesagt: p.text };
+    const bez = p.text.charAt(0).toUpperCase() + p.text.slice(1);
+    return { menge: p.menge, einheit: p.einheit || "Stk", bezeichnung: bez, artikelnummer: "", quelle: "frei", treffer: false, gesagt: p.text };
+  });
+}
+
+// Tab „🎤 Diktat“ in „Material hinzufügen“ (Aufmaß, Packliste)
+function bindeMaterialDiktat(material, onHinzufuegen) {
+  const ta = document.getElementById("md_text");
+  const btn = document.getElementById("md_hinzufuegen");
+  const info = document.getElementById("md_ergebnis");
+  if (!ta || !btn) return;
+  const pruefe = () => { btn.disabled = !ta.value.trim(); };
+  ta.addEventListener("input", pruefe);
+  pruefe();
+  btn.addEventListener("click", () => {
+    const erkannt = erkenneMaterialDiktat(ta.value);
+    if (!erkannt.length) { info.hidden = false; info.innerHTML = '<p class="hint">Nichts erkannt – z. B. „20 Meter NYM 3x1,5, 10 Abzweigdosen“ sprechen.</p>'; return; }
+    const neueIds = [];
+    for (const x of erkannt) {
+      const id = neueId();
+      neueIds.push(id);
+      material.push({ id, bezeichnung: x.bezeichnung, artikelnummer: x.artikelnummer || "", einheit: x.einheit, menge: x.menge, quelle: x.quelle, erledigt: false });
+      if (x.treffer) registriereFavoritTreffer(x.quelle, x.artikelnummer, x.bezeichnung, x.einheit);
+    }
+    ta.value = "";
+    pruefe();
+    onHinzufuegen();
+    info.hidden = false;
+    info.innerHTML = "";
+    const ul = document.createElement("ul");
+    ul.className = "diktat-liste";
+    for (const x of erkannt) {
+      const li = document.createElement("li");
+      const menge = String(x.menge).replace(".", ",");
+      li.textContent = `${x.treffer ? "✓" : "✎"} ${menge} ${x.einheit} ${x.bezeichnung}`;
+      const s = document.createElement("small");
+      s.textContent = x.treffer ? `aus Materialdatenbank (gesagt: „${x.gesagt}“)` : "nicht in der Datenbank – als Freitext übernommen";
+      if (!x.treffer) li.classList.add("frei");
+      li.appendChild(s);
+      ul.appendChild(li);
+    }
+    const kopf = document.createElement("div");
+    kopf.className = "kategorie-titel-klein";
+    kopf.textContent = `${erkannt.length} Position${erkannt.length === 1 ? "" : "en"} hinzugefügt:`;
+    const undo = document.createElement("button");
+    undo.type = "button";
+    undo.className = "btn-danger-text";
+    undo.textContent = "↶ Rückgängig";
+    undo.addEventListener("click", () => {
+      for (let i = material.length - 1; i >= 0; i--) if (neueIds.includes(material[i].id)) material.splice(i, 1);
+      onHinzufuegen();
+      info.innerHTML = '<p class="hint">Rückgängig gemacht.</p>';
+    });
+    info.append(kopf, ul, undo);
+  });
+}
+
+/* ---------- Display wach halten beim Diktieren (v18.2) ----------
+   Screen Wake Lock API: solange ein Diktat-Feld aktiv (fokussiert) ist,
+   geht das Display nicht aus. Nach Verlassen des Feldes wird die Sperre
+   nach 2 Minuten freigegeben. Wird beim Zurückkehren in die App erneut
+   angefordert (iOS gibt die Sperre beim Wechsel in den Hintergrund frei).
+   Ohne Unterstützung (ältere iOS-Versionen) passiert einfach nichts. */
+const wachHalten = { sperre: null, timer: null, aktiv: false };
+
+async function displayWachHalten() {
+  wachHalten.aktiv = true;
+  clearTimeout(wachHalten.timer);
+  if (!("wakeLock" in navigator) || wachHalten.sperre) return;
+  try {
+    wachHalten.sperre = await navigator.wakeLock.request("screen");
+    wachHalten.sperre.addEventListener("release", () => { wachHalten.sperre = null; });
+  } catch (e) {
+    console.warn("Display wach halten nicht möglich", e);
+  }
+}
+
+function displayFreigebenSpaeter() {
+  clearTimeout(wachHalten.timer);
+  wachHalten.timer = setTimeout(() => {
+    wachHalten.aktiv = false;
+    if (wachHalten.sperre) { wachHalten.sperre.release().catch(() => {}); wachHalten.sperre = null; }
+  }, 2 * 60 * 1000);
+}
+
+document.addEventListener("focusin", (e) => {
+  if (e.target && e.target.matches && e.target.matches(".diktat-text, #md_text")) displayWachHalten();
+});
+document.addEventListener("focusout", (e) => {
+  if (e.target && e.target.matches && e.target.matches(".diktat-text, #md_text")) displayFreigebenSpaeter();
+});
+document.addEventListener("input", (e) => {
+  // Diktat schreibt laufend Text ins Feld -> Sperre aktiv halten
+  if (e.target && e.target.matches && e.target.matches(".diktat-text, #md_text")) displayWachHalten();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && wachHalten.aktiv) displayWachHalten();
+});

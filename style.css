@@ -758,3 +758,12 @@ main#app { padding-top: calc(var(--header-h) + var(--safe-top) + 14px); }
 .diktat-liste li { color: #1d6b3a; }
 .diktat-liste small { display: block; color: #8a5a00; font-size: 0.78rem; margin-left: 16px; }
 .diktat-unbekannt { color: var(--color-danger); font-size: 0.85rem; margin: 4px 0 8px; }
+
+/* v18: Installationsart im Raum */
+.raum-installation { margin-top: 6px; }
+.raum-installation .segment-btn { font-size: 0.82rem; padding: 8px 2px; }
+#tabDiktat textarea { min-height: 84px; font-size: 1rem; }
+.diktat-liste li.frei { color: #8a5a00; }
+.diktat-liste li small { color: var(--color-text-muted); }
+.tabs { overflow-x: auto; scrollbar-width: none; }
+.tab { white-space: nowrap; }
