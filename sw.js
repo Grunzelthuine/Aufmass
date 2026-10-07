@@ -1,6 +1,6 @@
 // Service Worker für Material-Aufmaß App
 // Versionsnummer bei jedem Deploy mit Inhaltsänderungen erhöhen, damit Nutzer die neue Version bekommen.
-const CACHE_VERSION = "aufmass-v19-4";
+const CACHE_VERSION = "aufmass-v19-5";
 // Eigener Cache für den großen DATANORM-Katalog (~125 MB). Wird bei
 // App-Updates NICHT gelöscht, damit nicht bei jeder neuen App-Version der
 // komplette Katalog erneut heruntergeladen werden muss. Die Chunk-URLs
@@ -48,7 +48,8 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_VERSION && k !== KATALOG_CACHE).map((k) => caches.delete(k)))
+      // nur eigene alte Caches löschen (die Aufmaßsoftware auf derselben Domain nutzt „am2-…“)
+      Promise.all(keys.filter((k) => k.startsWith("aufmass-v") && k !== CACHE_VERSION).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
