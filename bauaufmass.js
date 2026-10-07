@@ -1432,7 +1432,17 @@ function renderSchaltungen() {
         autosave();
         renderSchaltungen();
       });
-      box.appendChild(baueZaehler("Länge (m)", st.meter || 0, 0, (v) => { st.meter = v; autosave(); }, { dezimal: true }));
+      // v18.4: laufende Meter oder Anzahl Rollen (Menge steht in st.meter)
+      const rollen = st.einheit === "Rolle";
+      box.appendChild(baueSegment("", [{ key: "m", b: "Laufende Meter" }, { key: "Rolle", b: "Rollen" }], rollen ? "Rolle" : "m", (v) => {
+        st.einheit = v === "Rolle" ? "Rolle" : "m";
+        if (st.einheit === "Rolle") st.meter = 1; // Meterwert passt nicht als Rollenanzahl
+        autosave();
+        renderSchaltungen();
+      }));
+      box.appendChild(rollen
+        ? baueZaehler("Anzahl Rollen", st.meter || 0, 0, (v) => { st.meter = v; autosave(); })
+        : baueZaehler("Länge (m)", st.meter || 0, 0, (v) => { st.meter = v; autosave(); }, { dezimal: true }));
       box.appendChild(baueProduktAuswahl({
         kat: "ledstripe", wert: st.typ, label: "Typ LED-Stripe", leerText: "Typ LED-Stripe: – offen –",
         onChange: ({ name, nr }) => { st.typ = name; st.nr = nr; autosave(); }
@@ -1644,6 +1654,10 @@ function strahlerZeile(s) {
   return "Strahler" + (typ ? ` – ${typ}` : "");
 }
 
+function stripeEinheit(st) {
+  return st.einheit === "Rolle" ? "Rolle" : "m";
+}
+
 function stripeZeile(st) {
   const typ = (st.typ || "").trim();
   return "LED-Stripe" + (typ ? ` – ${typ}` : "");
@@ -1675,7 +1689,7 @@ function bauRaumZeilen(b, raum) {
         else zeilen.push({ b: a.b, menge: s[a.key], e: "Stck", unter: true });
       }
       for (const st of s.stripes || []) {
-        if (st.meter > 0) zeilen.push({ b: stripeZeile(st), nr: st.nr || "", menge: st.meter, e: "m", unter: true });
+        if (st.meter > 0) zeilen.push({ b: stripeZeile(st), nr: st.nr || "", menge: st.meter, e: stripeEinheit(st), unter: true });
       }
     });
   }
@@ -1800,7 +1814,7 @@ function bauGesamtZeilen(b) {
           if (a.key === "strahler") auslaesseSM.add(strahlerZeile(s), s[a.key], "Stck", s.strahlerNr, idx);
           else auslaesseSM.add(a.b, s[a.key], "Stck", "", idx);
         });
-        for (const x of s.stripes || []) if (x.meter > 0) stripes.add(stripeZeile(x), x.meter, "m", x.nr);
+        for (const x of s.stripes || []) if (x.meter > 0) stripes.add(stripeZeile(x), x.meter, stripeEinheit(x), x.nr);
       }
       const knxR = istKnxRaum(b, raum);
       for (const r of raum.rollos || []) {

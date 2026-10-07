@@ -114,13 +114,21 @@ const DIKTAT_FUELLWORTE = new Set(["und", "mit", "noch", "dann", "plus", "sowie"
   "hier", "da", "raum", "zimmer", "licht", "lampe", "lampen", "meter", "m", "metern", "fach", "anschluss", "anschlüsse", "dose", "dosen",
   "zusätzlich", "außerdem", "weitere", "weiteren", "neben", "über", "unter", "tür", "fenster", "bett", "esstisch", "sofa", "an", "von",
   "steuerung", "ohne", "temperatur", "temperatursensor", "einem", "pro", "s", "dimmbar", "dimmbare", "dimmbaren", "gedimmt",
-  "schaltbar", "tunable", "white", "rgb", "rgbw", "weiß", "abgleich", "beleuchtung", "jeweils", "insgesamt", "davon"]);
+  "schaltbar", "tunable", "white", "rgb", "rgbw", "weiß", "abgleich", "beleuchtung", "jeweils", "insgesamt", "davon", "rolle", "rollen"]);
 
 function diktatZahlVor(segment) {
   const m = segment.match(/(\d+(?:\.\d+)?)\s*((?:[a-zäöüß]+\s*){0,2})$/);
   if (!m) return null;
-  if (/\b(m|meter|metern|fach)\b/.test(m[2])) return null; // „3 Meter …“ / „2 fach …“ ist keine Anzahl
+  if (/\b(m|meter|metern|fach|rollen?)\b/.test(m[2])) return null; // „3 Meter …“ / „2 fach …“ ist keine Anzahl
   return parseFloat(m[1]);
+}
+
+// v18.4: „2 Rollen LED-Stripe“ / „LED-Stripe 2 Rollen“
+function diktatRollen(vor, nach) {
+  const v = vor.match(/(\d+(?:\.\d+)?)\s*rollen?\s*$/);
+  if (v) return parseFloat(v[1]);
+  const n = nach.match(/^\s*(?:mit\s+)?(\d+(?:\.\d+)?)\s*rollen?\b/);
+  return n ? parseFloat(n[1]) : null;
 }
 
 function diktatMeter(segment) {
@@ -199,6 +207,8 @@ function werteDiktatAus(text) {
       const ziele = /\b(je|jeweils)\b/.test(vor) && ctx.gruppe ? ctx.gruppe : [s];
       for (const z of ziele) {
         if (mu.art === "stripe") {
+          const rollen = diktatRollen(vor, nach);
+          if (rollen !== null) { z.stripes.push({ menge: Math.max(1, Math.round(rollen)), einheit: "Rolle" }); continue; }
           const meter = diktatMeter(vor) ?? diktatMeter(nach) ?? (anzahl !== null ? anzahl : 1);
           z.stripes.push(meter);
         } else {
@@ -320,7 +330,10 @@ function diktatVorschau(ergebnis) {
       if (a.schaltstellen) teile.push(`${a.schaltstellen} ${t.stromkreis && a.schaltstellen === 1 ? "Stromkreis" : t.stellenEinheit || "Schaltstellen"}`);
       if (a.melderArt) teile.push(`${a.melderAnzahl || 1}× ${melderArt(a.melderArt).b}`);
       for (const x of BAU_AUSLAESSE) if (a.auslaesse[x.key]) teile.push(`${a.auslaesse[x.key]}× ${x.b}`);
-      for (const m of a.stripes) teile.push(`LED-Stripe ${String(m).replace(".", ",")} m`);
+      for (const m of a.stripes) {
+        if (typeof m === "object") teile.push(`LED-Stripe ${m.menge} Rolle${m.menge === 1 ? "" : "n"}`);
+        else teile.push(`LED-Stripe ${String(m).replace(".", ",")} m`);
+      }
       zeilen.push({ text: `${t.b}${teile.length ? ": " + teile.join(", ") : ""}`, hinweis: a.angenommen ? "Schaltungsart nicht genannt – Ausschaltung angenommen" : (a.hinweis || "") });
     } else if (a.art === "position") {
       zeilen.push({ text: `${a.anzahl}× ${diktatPositionsName(a.key)}`, hinweis: a.annahme || "" });
@@ -350,7 +363,9 @@ function wendeDiktatAn(raum, ergebnis) {
       const s = { id: neueId(), typ: t.key, schaltstellen: Math.max(t.min, a.schaltstellen || t.min), wand: 0, decke: 0, steckdose: 0, strahler: 0, bemerkung: "", stripes: [] };
       if (t.melder) Object.assign(s, { melderArt: a.melderArt || "praesenz", melderAnzahl: a.melderAnzahl || 1, melderTyp: "", melderNr: "" });
       for (const x of BAU_AUSLAESSE) s[x.key] = a.auslaesse[x.key] || 0;
-      s.stripes = a.stripes.map((m) => ({ id: neueId(), meter: m, typ: "", nr: "" }));
+      s.stripes = a.stripes.map((m) => (typeof m === "object"
+        ? { id: neueId(), meter: m.menge, einheit: "Rolle", typ: "", nr: "" }
+        : { id: neueId(), meter: m, einheit: "m", typ: "", nr: "" }));
       raum.schaltungen.push(s);
     } else if (a.art === "position") {
       raum.positionen[a.key] = (raum.positionen[a.key] || 0) + a.anzahl;

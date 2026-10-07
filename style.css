@@ -767,3 +767,10 @@ main#app { padding-top: calc(var(--header-h) + var(--safe-top) + 14px); }
 .diktat-liste li small { color: var(--color-text-muted); }
 .tabs { overflow-x: auto; scrollbar-width: none; }
 .tab { white-space: nowrap; }
+
+/* v18.4: Einheit-Wahl m / Rollen bei LED-Stripes (Aufmaß, Packliste) */
+.einheit-wahl { display: flex; margin-top: 6px; border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; background: #fff; }
+.einheit-wahl button { flex: 1; border: none; background: transparent; padding: 5px 4px; font-size: 0.8rem; font-weight: 600; color: var(--color-text-muted); }
+.einheit-wahl button + button { border-left: 1px solid var(--color-border); }
+.einheit-wahl button.aktiv { background: var(--color-primary); color: #fff; }
+.stripe-box .segment-feld { margin-bottom: 4px; }

@@ -1342,6 +1342,11 @@ function bindeMaterialAuswahl(material, onHinzufuegen, optionen) {
    dem Zusatzfeld zum Draufaddieren. `m` ist die mutierte Materialposition,
    `onChange` wird nach jeder Änderung aufgerufen (Autosave). Gemeinsam
    genutzt von der Aufmaß-Materialliste und der Packliste. */
+// v18.4: LED-Stripes wahlweise in laufenden Metern oder Rollen
+function istLedStripeMaterial(m) {
+  return /led[- ]?(stripe|strip|streifen|band)|lichtband/i.test(m.bezeichnung || "");
+}
+
 function baueMengeZelle(m, onChange) {
   const td = document.createElement("td");
   td.className = "col-menge";
@@ -1359,6 +1364,25 @@ function baueMengeZelle(m, onChange) {
     </div>
     ${meterZeile}
   `;
+
+  if (istLedStripeMaterial(m)) {
+    const rollen = /^rolle/i.test((m.einheit || "").trim());
+    const wahl = document.createElement("div");
+    wahl.className = "einheit-wahl";
+    wahl.innerHTML = `<button type="button" data-e="m" class="${rollen ? "" : "aktiv"}">m</button><button type="button" data-e="Rolle" class="${rollen ? "aktiv" : ""}">Rollen</button>`;
+    wahl.querySelectorAll("button").forEach((btn) => btn.addEventListener("click", () => {
+      const neu = btn.dataset.e;
+      if (neu === (rollen ? "Rolle" : "m")) return;
+      m.einheit = neu;
+      if (neu === "Rolle") m.menge = 1; // Meterwert passt nicht als Rollenanzahl
+      onChange();
+      // Einheit-Spalte (direkt rechts daneben) mitziehen
+      const zelle = td.nextElementSibling;
+      if (zelle && zelle.tagName === "TD" && !zelle.querySelector("button, input")) zelle.textContent = m.einheit;
+      td.replaceWith(baueMengeZelle(m, onChange));
+    }));
+    td.appendChild(wahl);
+  }
 
   const mengeInput = td.querySelector(".menge-input");
   mengeInput.addEventListener("input", (e) => {
