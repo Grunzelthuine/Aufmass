@@ -791,3 +791,15 @@ main#app { padding-top: calc(var(--header-h) + var(--safe-top) + 14px); }
 .pf-ordner-wrap { flex-direction: column; gap: 4px; }
 .pf-ordner-wrap select { width: 100%; }
 .db-verschieben { display: block; width: 100%; margin-top: 6px; font-size: 0.88rem; }
+
+/* v19.3: Gesendet-Markierung */
+.gesendet-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin: 14px 0 4px; padding: 10px 12px; border-radius: 10px; border: 1px dashed var(--color-border); font-size: 0.9rem; color: var(--color-text-muted); background: #fff; }
+.gesendet-status.ist-gesendet { border-style: solid; border-color: #9fd8b0; background: #ecf8f0; color: #1e6b3a; font-weight: 600; }
+.gesendet-status .btn-link-accent { font-weight: 600; }
+.gesendet-badge { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #ecf8f0; color: #1e6b3a; border: 1px solid #9fd8b0; font-size: 0.72rem; font-weight: 600; vertical-align: middle; white-space: nowrap; }
+.gesendet-bereich { margin-top: 18px; }
+.gesendet-bereich > summary { cursor: pointer; font-weight: 600; color: var(--color-text-muted); padding: 8px 2px; list-style: none; }
+.gesendet-bereich > summary::-webkit-details-marker { display: none; }
+.gesendet-bereich > summary::after { content: " ▸"; }
+.gesendet-bereich[open] > summary::after { content: " ▾"; }
+.aufmass-card.gesendet { opacity: 0.85; }

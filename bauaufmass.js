@@ -994,6 +994,10 @@ function oeffneBauaufmass(b, scrollY) {
     autosaveBauaufmass();
     erstelleBauPdf(b);
   });
+  baueGesendetStatus(b, document.getElementById("btnBauPdf"), () => {
+    if (currentBauaufmass === b) autosaveBauaufmass();
+    speichereBauaufmasse();
+  });
 
   window.scrollTo(0, scrollY || 0);
 }
@@ -2104,5 +2108,10 @@ function erstelleBauPdf(b) {
     doc.setTextColor(0);
   }
 
-  gibPdfAus(doc, bauDateiname(b));
+  gibPdfAus(doc, bauDateiname(b), () => {
+    if (currentBauaufmass === b) autosaveBauaufmass();
+    setzeGesendet(b, true);
+    speichereBauaufmasse();
+    if (currentBauaufmass === b) aktualisiereGesendetStatus(b);
+  });
 }

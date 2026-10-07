@@ -702,14 +702,35 @@ function zeigeUebersicht() {
   view.appendChild(leer);
   app.appendChild(view);
 
-  const karte = (titel, meta, onClick) => {
+  // v19.3: gesendete Aufmaße/Bauaufmaße in eigenem, zugeklapptem Bereich
+  let ulGesendet = null;
+  const gesendetListe = () => {
+    if (ulGesendet) return ulGesendet;
+    const det = document.createElement("details");
+    det.className = "gesendet-bereich";
+    det.innerHTML = `<summary>✓ Bereits gesendet (<span class="gesendet-anzahl">0</span>)</summary>`;
+    ulGesendet = document.createElement("ul");
+    ulGesendet.className = "card-list";
+    det.appendChild(ulGesendet);
+    leer.before(det);
+    return ulGesendet;
+  };
+  const karte = (titel, meta, onClick, gesendet) => {
     const li = document.createElement("li");
-    li.className = "aufmass-card";
+    li.className = "aufmass-card" + (gesendet ? " gesendet" : "");
     li.innerHTML = `<div class="info"><p class="kunde"></p><p class="meta"></p></div><span class="chevron">›</span>`;
     li.querySelector(".kunde").textContent = titel;
     li.querySelector(".meta").textContent = meta;
+    if (gesendet) {
+      const badge = document.createElement("span");
+      badge.className = "gesendet-badge";
+      badge.textContent = "✓ gesendet " + formatDatumDE(gesendet.slice(0, 10));
+      li.querySelector(".kunde").appendChild(badge);
+    }
     li.addEventListener("click", onClick);
-    ul.appendChild(li);
+    const ziel = gesendet ? gesendetListe() : ul;
+    ziel.appendChild(li);
+    if (gesendet) ziel.closest("details").querySelector(".gesendet-anzahl").textContent = ziel.children.length;
   };
   const sortiere = (l) => [...l].sort((a, b) => (b.geaendert || "").localeCompare(a.geaendert || ""));
 
@@ -718,7 +739,7 @@ function zeigeUebersicht() {
     for (const a of sortiere(aufmassListe)) {
       const n = a.material.length;
       const besch = a.arbeitsbeschreibung.trim();
-      karte(a.kunde.name.trim() || "(ohne Kundenname)", `${formatDatumDE(a.datum)} · ${n} Position${n === 1 ? "" : "en"}${besch ? " · " + besch : ""}`, () => oeffneFormular(a));
+      karte(a.kunde.name.trim() || "(ohne Kundenname)", `${formatDatumDE(a.datum)} · ${n} Position${n === 1 ? "" : "en"}${besch ? " · " + besch : ""}`, () => oeffneFormular(a), a.gesendet);
     }
   } else if (aktuellerBereich === "packliste") {
     leer.textContent = packlisten.length ? "" : "Noch keine Packliste angelegt.";
@@ -734,7 +755,7 @@ function zeigeUebersicht() {
       const besch = b.arbeitsbeschreibung.trim();
       karte(b.kunde.name.trim() || "(ohne Kundenname)",
         `${formatDatumDE(erstelltDatumISO(b))} · ${b.etagen.length} Etage${b.etagen.length === 1 ? "" : "n"}, ${nR} Raum${nR === 1 ? "" : "e"}${nV ? `, ${nV} Verteilung${nV === 1 ? "" : "en"}` : ""}${besch ? " · " + besch : ""}`,
-        () => oeffneBauaufmass(b));
+        () => oeffneBauaufmass(b), b.gesendet);
     }
   }
   leer.hidden = !leer.textContent;
@@ -823,6 +844,9 @@ function bindeFormularEvents() {
   document.getElementById("btnPdf").addEventListener("click", () => {
     if (!istLeeresAufmass(a)) upsertCurrentInListe();
     erstellePdf(a);
+  });
+  baueGesendetStatus(a, document.getElementById("btnPdf"), () => {
+    if (currentAufmass === a && !istLeeresAufmass(a)) upsertCurrentInListe(); else speichereListe();
   });
 }
 
@@ -1357,8 +1381,13 @@ function bindeMaterialAuswahl(material, onHinzufuegen, optionen) {
    `onChange` wird nach jeder Änderung aufgerufen (Autosave). Gemeinsam
    genutzt von der Aufmaß-Materialliste und der Packliste. */
 // v18.4: LED-Stripes wahlweise in laufenden Metern oder Rollen
+// v19.4: nur echte Stripes (Einheit m oder Rolle), kein Zubehör wie Treiber/Netzteil/Profil
+const LED_ZUBEHOER = /treiber|netzteil|trafo|transformator|vorschaltger|konverter|converter|controller|steuer|dimmer|empf(ä|ae)nger|profil|abdeckung|diffusor|endkappe|kappe|halter|clip|klammer|verbinder|kupplung|einspeis|kabel|leitung|fernbedienung|sensor|schalter|taster|gateway|modul|aktor/i;
 function istLedStripeMaterial(m) {
-  return /led[- ]?(stripe|strip|streifen|band)|lichtband/i.test(m.bezeichnung || "");
+  const b = m.bezeichnung || "";
+  const e = (m.einheit || "").trim().toLowerCase();
+  if (!(e === "m" || e.startsWith("rolle") || /rolle/i.test(b))) return false;
+  return /led[- ]?(stripe|strip|streifen|band)|lichtband/i.test(b) && !LED_ZUBEHOER.test(b);
 }
 
 function baueMengeZelle(m, onChange) {
@@ -1710,14 +1739,65 @@ function erstellePdf(a) {
     }
   });
 
-  gibPdfAus(doc, dateiname(a));
+  // v19.3: nach erfolgreichem Teilen automatisch als gesendet markieren
+  gibPdfAus(doc, dateiname(a), () => {
+    if (currentAufmass === a) upsertCurrentInListe();
+    setzeGesendet(a, true);
+    speichereListe();
+    if (currentAufmass === a) aktualisiereGesendetStatus(a);
+  });
+}
+
+/* ---------- Gesendet-Markierung (v19.3) ----------
+   `gesendet`: ISO-Zeitpunkt oder fehlt. Wird beim Teilen des PDFs automatisch
+   gesetzt und kann im Aufmaß/Bauaufmaß von Hand gesetzt/zurückgenommen werden. */
+function setzeGesendet(obj, an) {
+  if (an) obj.gesendet = new Date().toISOString();
+  else delete obj.gesendet;
+}
+
+function formatZeitDE(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }) + ", " +
+    d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) + " Uhr";
+}
+
+// Statuszeile über den Aktionsknöpfen; `speichern` sichert das Objekt nach einer Änderung
+let gesendetStatusEl = null;
+let gesendetSpeichern = null;
+function baueGesendetStatus(obj, ankerButton, speichern) {
+  gesendetSpeichern = speichern;
+  gesendetStatusEl = document.createElement("div");
+  gesendetStatusEl.className = "gesendet-status";
+  ankerButton.closest(".action-bar").before(gesendetStatusEl);
+  aktualisiereGesendetStatus(obj);
+}
+
+function aktualisiereGesendetStatus(obj) {
+  const el = gesendetStatusEl;
+  if (!el || !document.body.contains(el)) return;
+  el.innerHTML = "";
+  el.classList.toggle("ist-gesendet", !!obj.gesendet);
+  const text = document.createElement("span");
+  text.textContent = obj.gesendet ? `✓ Gesendet am ${formatZeitDE(obj.gesendet)}` : "Noch nicht gesendet";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-link-accent";
+  btn.textContent = obj.gesendet ? "zurücksetzen" : "✓ als gesendet markieren";
+  btn.addEventListener("click", () => {
+    setzeGesendet(obj, !obj.gesendet);
+    if (gesendetSpeichern) gesendetSpeichern();
+    aktualisiereGesendetStatus(obj);
+  });
+  el.append(text, btn);
 }
 
 /* v19.2: PDF ausgeben. Auf dem iPhone/iPad (und anderen Geräten mit Teilen-Funktion)
    öffnet sich direkt das Teilen-Menü mit genau EINER sauberen PDF-Datei
    (Mail, AirDrop, In Dateien sichern …) – ohne zusätzlichen Text, der in Mail
    sonst als zweiter Anhang auftaucht. Sonst normaler Download. */
-function gibPdfAus(doc, name) {
+function gibPdfAus(doc, name, onGeteilt) {
   let datei = null;
   try {
     const blob = doc.output("blob");
@@ -1725,7 +1805,7 @@ function gibPdfAus(doc, name) {
   } catch (e) { datei = null; }
   const mobil = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   if (datei && mobil && navigator.canShare && navigator.canShare({ files: [datei] })) {
-    navigator.share({ files: [datei] }).catch((err) => {
+    navigator.share({ files: [datei] }).then(() => { if (onGeteilt) onGeteilt(); }).catch((err) => {
       if (err && err.name === "AbortError") return; // abgebrochen
       doc.save(name);                                 // z. B. Geste abgelaufen -> Download
     });
