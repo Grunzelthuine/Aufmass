@@ -193,6 +193,7 @@
           <input type="text" id="su_einheit">
         </label>
       </div>
+      <label class="pf-ordner-wrap" id="su_ordnerWrap" hidden><input type="checkbox" id="su_ordner" checked> Nur für Baustelle „<span id="su_ordnerName"></span>“ (📁 Baustellen-Ordner)</label>
       <div class="action-bar" style="margin-top:8px">
         <button type="button" class="btn btn-secondary" id="su_uebernehmen">Übernehmen</button>
         <button type="button" class="btn-danger-text" id="su_abbrechen">Abbrechen</button>
@@ -346,6 +347,11 @@
         <textarea id="b_arbeitsbeschreibung" rows="3" placeholder="z. B. Elektroinstallation Neubau EFH"></textarea>
       </label>
       <p class="hint" id="b_datumHinweis"></p>
+    </details>
+
+    <details class="section-card" open>
+      <summary>📁 Baustellen-Material</summary>
+      <div id="b_ordner"></div>
     </details>
 
     <details class="section-card" open>

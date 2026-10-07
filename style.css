@@ -781,3 +781,10 @@ main#app { padding-top: calc(var(--header-h) + var(--safe-top) + 14px); }
 .kombi-teil .kt-name { width: 100%; margin-top: 4px; }
 .kombi-teil .kt-nr { display: block; margin-top: 2px; }
 .kombi-hinweis { margin: 2px 0 6px; font-size: 0.8rem; }
+
+/* v19: Baustellen-Ordner */
+#b_ordner select { width: 100%; }
+.pf-ordner-wrap { display: flex; gap: 8px; align-items: flex-start; font-size: 0.86rem; margin: 10px 0 4px; padding: 8px 10px; border-radius: 8px; background: #fff7e6; border: 1px solid #f5d79e; }
+.pf-ordner-wrap input { width: auto; margin-top: 2px; }
+.db-ordner-kopf { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ordner-karte > summary { background: #fff7e6; }

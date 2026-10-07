@@ -240,8 +240,8 @@ function topFavoriten() {
 function ladeCustomStandardMaterial() { /* v15: in der Materialdatenbank enthalten */ }
 
 // Artikel aus „Aus Liste“ in die Materialdatenbank übernehmen
-function nehmeInStandardmaterialAuf(katId, bezeichnung, einheit, nr, ean) {
-  return dbNeu({ kat: katId, name: bezeichnung, nr: nr || "", ean: ean || "", einheit });
+function nehmeInStandardmaterialAuf(katId, bezeichnung, einheit, nr, ean, ordner) {
+  return dbNeu({ kat: katId, name: bezeichnung, nr: nr || "", ean: ean || "", einheit, ordner });
 }
 
 /* ---------- Barcode-Scanner (Kamera) ----------
@@ -843,6 +843,8 @@ function klonMaterialTabs(platzhalterId) {
    `onHinzufuegen` wird nach jedem erfolgreichen Hinzufügen aufgerufen
    (übernimmt Re-Rendering + Autosave beim Aufrufer). */
 function bindeMaterialAuswahl(material, onHinzufuegen, optionen) {
+  // v19: Standardmaterial-/Artikel-Listen passend zum Baustellen-Ordner des geöffneten Bauaufmaßes
+  if (typeof aktualisiereAbgeleiteteListen === "function") aktualisiereAbgeleiteteListen();
   // v18.5: Kombinationsprodukte (z. B. Gehäuse + Leuchtmittel) beim Hinzufügen in ihre Teile auflösen
   const nachHinzufuegen = onHinzufuegen;
   onHinzufuegen = () => {
@@ -1176,6 +1178,11 @@ function bindeMaterialAuswahl(material, onHinzufuegen, optionen) {
     suBezeichnung.value = selectedArtikel.b;
     suEinheit.value = selectedArtikel.e;
     suBestaetigung.hidden = true;
+    // v19: bei verknüpftem Baustellen-Ordner standardmäßig dort ablegen
+    const ordId = typeof aktiverOrdnerId === "function" ? aktiverOrdnerId() : "";
+    document.getElementById("su_ordnerWrap").hidden = !ordId;
+    document.getElementById("su_ordner").checked = true;
+    if (ordId) document.getElementById("su_ordnerName").textContent = ordnerName(ordId);
     standardUebernahmeForm.hidden = false;
     btnZuStandardOeffnen.hidden = true;
   });
@@ -1197,7 +1204,8 @@ function bindeMaterialAuswahl(material, onHinzufuegen, optionen) {
     }
     const nr = selectedArtikel && !selectedArtikel._eigen ? selectedArtikel.n : "";
     const ean = selectedArtikel ? (selectedArtikel.g || "") : "";
-    nehmeInStandardmaterialAuf(kategorie, bezeichnung, einheit, nr, ean);
+    const ordId = typeof aktiverOrdnerId === "function" ? aktiverOrdnerId() : "";
+    nehmeInStandardmaterialAuf(kategorie, bezeichnung, einheit, nr, ean, ordId && document.getElementById("su_ordner").checked ? ordId : "");
     renderStandardListe(sucheStandardInput.value);
     suBestaetigung.hidden = false;
     setTimeout(() => {

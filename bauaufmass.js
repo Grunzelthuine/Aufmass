@@ -754,9 +754,17 @@ function baueProduktAuswahl({ kat, wert, leerText, label, onChange }) {
     add("", leerText);
     const liste = produkteDerKategorie(kat);
     let gewaehlt = "";
+    let ziel = select;
+    const gruppe = (label) => { const g = document.createElement("optgroup"); g.label = label; select.appendChild(g); return g; };
+    const ordnerListe = liste.filter((p) => p.ordner);
+    if (ordnerListe.length) ziel = gruppe("📁 " + ordnerName(ordnerListe[0].ordner));
     for (const p of liste) {
-      add("p:" + p.id, istKombi(p) ? `${p.name} (Kombination)` : p.name + (p.nr ? ` · ${p.nr}` : ""));
-      if (aktuell && p.name === aktuell) gewaehlt = "p:" + p.id;
+      if (ordnerListe.length && !p.ordner && ziel.label && ziel.label.startsWith("📁")) ziel = gruppe("Allgemein");
+      const o = document.createElement("option");
+      o.value = "p:" + p.id;
+      o.textContent = istKombi(p) ? `${p.name} (Kombination)` : p.name + (p.nr ? ` · ${p.nr}` : "");
+      ziel.appendChild(o);
+      if (aktuell && p.name === aktuell && !gewaehlt) gewaehlt = "p:" + p.id;
     }
     if (aktuell && !gewaehlt) { add("x:", aktuell + " (Freitext)"); gewaehlt = "x:"; }
     add("__frei__", "✎ Freitext eingeben…");
@@ -795,6 +803,7 @@ function baueProduktAuswahl({ kat, wert, leerText, label, onChange }) {
     } else if (v === "__kombi__") {
       formPlatz.appendChild(baueKombiFormular({
         katId: "sys:" + kat,
+        ordner: aktiverOrdnerId(),
         onSave: (p) => { formPlatz.innerHTML = ""; setze(p.name, p.nr, p.id); },
         onCancel: () => { formPlatz.innerHTML = ""; fuelle(); }
       }));
@@ -808,6 +817,44 @@ function baueProduktAuswahl({ kat, wert, leerText, label, onChange }) {
   freiZeile.querySelector("button").addEventListener("click", freiOk);
   freiZeile.querySelector("input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); freiOk(); } });
   return wrap;
+}
+
+/* ---------- Baustellen-Ordner im Bauaufmaß (v19) ---------- */
+function renderOrdnerAuswahl(b) {
+  const platz = document.getElementById("b_ordner");
+  if (!platz) return;
+  platz.innerHTML = "";
+  if (b.ordner && !dbOrdner.some((o) => o.id === b.ordner)) b.ordner = ""; // Ordner wurde gelöscht
+  const select = document.createElement("select");
+  const add = (value, text) => {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = text;
+    select.appendChild(o);
+  };
+  add("", "– kein Baustellen-Ordner –");
+  for (const o of dbOrdner.slice().sort((x, y) => x.name.localeCompare(y.name, "de"))) {
+    add(o.id, `📁 ${o.name} (${materialImOrdner(o.id).length} Einträge)`);
+  }
+  add("__neu__", "＋ Neuen Baustellen-Ordner anlegen…");
+  select.value = b.ordner || "";
+  select.addEventListener("change", () => {
+    if (select.value === "__neu__") {
+      const vorschlag = (b.baustelle || "").trim() || (b.kunde.name || "").trim();
+      const n = prompt("Name des Baustellen-Ordners:", vorschlag);
+      const o = n && legeOrdnerAn(n);
+      b.ordner = o ? o.id : b.ordner || "";
+    } else b.ordner = select.value;
+    autosave();
+    renderOrdnerAuswahl(b);
+  });
+  platz.appendChild(select);
+  const hinweis = document.createElement("p");
+  hinweis.className = "hint";
+  hinweis.textContent = b.ordner
+    ? `Material aus „${ordnerName(b.ordner)}“ steht in allen Auswahlen (Strahler, LED-Stripes, Material …) ganz oben. Neu angelegte Produkte landen standardmäßig in diesem Ordner. Verwalten/Löschen: Startseite → Materialdatenbank.`
+    : "Für Material, das nur auf dieser Baustelle gebraucht wird (z. B. bestimmte Strahler oder LED-Stripes). Es taucht dann nur hier auf und lässt sich nach der Baustelle samt Ordner löschen.";
+  platz.appendChild(hinweis);
 }
 
 /* ---------- Abdeckungen (v12) ----------
@@ -905,6 +952,8 @@ function oeffneBauaufmass(b, scrollY) {
     el.value = getter();
     el.addEventListener("input", (e) => { setter(e.target.value); autosave(); });
   }
+  // Baustellen-Ordner (v19)
+  renderOrdnerAuswahl(b);
   // Installationsart (v18)
   const abdPlatz = document.getElementById("b_abdeckung");
   abdPlatz.appendChild(baueSegment("Installationsart (gilt für alle Räume, je Raum änderbar)", [{ key: "konventionell", b: "Konventionell" }, { key: "knx", b: "KNX" }],
@@ -1420,7 +1469,13 @@ function renderSchaltungen() {
       if (a.key === "strahler" && s.strahler > 0) {
         const sp = baueProduktAuswahl({
           kat: "strahler", wert: s.strahlerTyp, label: "Typ Strahler", leerText: "Typ Strahler: – offen –",
-          onChange: ({ name, nr, produktId }) => { s.strahlerTyp = name; s.strahlerNr = nr; s.strahlerId = produktId; autosave(); renderSchaltungen(); }
+          onChange: ({ name, nr, produktId }) => {
+            s.strahlerTyp = name; s.strahlerNr = nr; s.strahlerId = produktId;
+            // v19: Teile einer Kombination mitspeichern – bleiben erhalten, auch wenn der Baustellen-Ordner später gelöscht wird
+            const k = findeKombi("sys:strahler", name, produktId);
+            if (k) s.strahlerTeile = k.teile.map((t) => ({ ...t })); else delete s.strahlerTeile;
+            autosave(); renderSchaltungen();
+          }
         });
         sp.classList.add("unter-auswahl");
         zaehler.appendChild(sp);
@@ -1667,7 +1722,8 @@ function komponentenZeilen(liste, typen, mitGruppen) {
 function strahlerTeile(s) {
   if (typeof findeKombi !== "function" || !(s.strahlerTyp || "").trim()) return [];
   const k = findeKombi("sys:strahler", s.strahlerTyp, s.strahlerId);
-  return k ? k.teile : [];
+  if (k) { s.strahlerTeile = k.teile.map((t) => ({ ...t })); return k.teile; } // Kopie nachziehen (ältere Aufmaße)
+  return Array.isArray(s.strahlerTeile) ? s.strahlerTeile : [];
 }
 
 function strahlerZeile(s) {

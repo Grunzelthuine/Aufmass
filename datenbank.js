@@ -21,10 +21,12 @@ const STORAGE_KEY_KATEGORIEN = "aufmass_v1_kategorien";
 const STORAGE_KEY_MATERIAL = "aufmass_v1_material";
 const DB_VERSION_KEY = "aufmass_v1_db_version";
 const KAT_EIGENE = "kat:eigene-artikel";
+const STORAGE_KEY_ORDNER = "aufmass_v1_ordner"; // v19: Baustellen-Ordner [{ id, name, erstellt }]
 const EINHEITEN = ["Stck", "m", "Pack", "Rolle", "Satz", "kg", "VE", "Paar"];
 
 let dbKategorien = [];  // freie Kategorien
 let dbMaterial = [];
+let dbOrdner = [];      // v19: Baustellen-Ordner; Material mit `ordner: <id>` gehört nur zu dieser Baustelle
 
 function dbIdHash(str) {
   let h = 5381;
@@ -43,6 +45,7 @@ function katIdAusName(name) {
 function ladeDatenbank() {
   try { dbKategorien = JSON.parse(localStorage.getItem(STORAGE_KEY_KATEGORIEN) || "[]"); } catch (e) { dbKategorien = []; }
   try { dbMaterial = JSON.parse(localStorage.getItem(STORAGE_KEY_MATERIAL) || "[]"); } catch (e) { dbMaterial = []; }
+  try { dbOrdner = JSON.parse(localStorage.getItem(STORAGE_KEY_ORDNER) || "[]"); } catch (e) { dbOrdner = []; }
   if (!dbKategorien.some((k) => k.id === KAT_EIGENE)) dbKategorien.push({ id: KAT_EIGENE, name: "Eigene Artikel" });
   // Systemkategorie, in die (z. B. über ein Auswahlfeld) wieder etwas eingetragen wurde, nicht mehr verstecken
   dbKategorien = dbKategorien.filter((k) => !(k.versteckt && dbMaterial.some((m) => m.kat === k.id)));
@@ -64,12 +67,15 @@ function speichereMaterial() {
 function aktualisiereAbgeleiteteListen() {
   if (typeof standardMaterialDB === "undefined") return; // app.js noch nicht geladen
   const reihenfolge = new Map(alleKategorien().map((k, i) => [k.id, i]));
-  standardMaterialDB = dbMaterial
-    .map((m) => ({ id: m.id, k: kategorieName(m.kat), b: m.name, e: m.einheit || "Stck", n: m.nr || "", g: m.ean || "", _r: reihenfolge.has(m.kat) ? reihenfolge.get(m.kat) : 999 }))
+  const sichtbar = dbMaterial.filter(imKontextSichtbar);
+  standardMaterialDB = sichtbar
+    .map((m) => m.ordner
+      ? { id: m.id, k: "📁 " + ordnerName(m.ordner), b: m.name, e: m.einheit || "Stck", n: m.nr || "", g: m.ean || "", _r: -1 }
+      : { id: m.id, k: kategorieName(m.kat), b: m.name, e: m.einheit || "Stck", n: m.nr || "", g: m.ean || "", _r: reihenfolge.has(m.kat) ? reihenfolge.get(m.kat) : 999 })
     .sort((a, b) => a._r - b._r || a.b.localeCompare(b.b, "de"))
     .map((a) => ({ ...a, _s: (a.k + " " + a.b + " " + a.n + " " + a.g).toLowerCase() }));
   standardMaterialDBReady = true;
-  eigeneArtikel = dbMaterial
+  eigeneArtikel = sichtbar
     .filter((m) => m.ean || m.nr)
     .map((m) => ({ n: m.nr || m.ean, b: m.name, e: m.einheit || "Stck", g: m.ean || "", _eigen: true, _dbId: m.id, _s: ((m.nr || "") + " " + (m.ean || "") + " " + m.name).toLowerCase() }));
 }
@@ -170,10 +176,10 @@ function dbFindeCode(code) {
 }
 
 // Neuer Eintrag; gleicher Name in gleicher Kategorie -> vorhandenen aktualisieren
-function dbNeu({ kat, name, nr, ean, einheit }) {
+function dbNeu({ kat, name, nr, ean, einheit, ordner }) {
   const n = (name || "").trim();
   if (!n) return null;
-  let m = dbMaterial.find((x) => x.kat === kat && x.name.toLowerCase() === n.toLowerCase());
+  let m = dbMaterial.find((x) => x.kat === kat && (x.ordner || "") === (ordner || "") && x.name.toLowerCase() === n.toLowerCase());
   if (m) {
     if (nr) m.nr = nr;
     if (ean) m.ean = ean;
@@ -181,6 +187,7 @@ function dbNeu({ kat, name, nr, ean, einheit }) {
     delete m._imp;
   } else {
     m = { id: neueId(), kat, name: n, nr: nr || "", ean: ean || "", einheit: einheit || kategorieInfo(kat).einheit || "Stck" };
+    if (ordner) m.ordner = ordner;
     dbMaterial.push(m);
   }
   speichereMaterial();
@@ -248,7 +255,7 @@ async function initDatenbank() {
 /* ---------- Formular: Eintrag anlegen / bearbeiten ----------
    Kamera-Scan bzw. Eingabe von EAN/Art.-Nr. sucht im Großhandelskatalog
    (DATANORM) und in der eigenen Datenbank und füllt Bezeichnung + Art.-Nr. */
-function baueMaterialFormular({ katId, katFest, eintrag, onSave, onCancel }) {
+function baueMaterialFormular({ katId, katFest, eintrag, onSave, onCancel, ordner }) {
   const form = document.createElement("div");
   form.className = "selected-article produkt-form";
   form.innerHTML = `
@@ -274,6 +281,7 @@ function baueMaterialFormular({ katId, katFest, eintrag, onSave, onCancel }) {
       <label>Einheit <input type="text" class="pf-einheit" list="pf_einheiten" autocomplete="off"></label>
     </div>
     <datalist id="pf_einheiten">${EINHEITEN.map((e) => `<option value="${e}"></option>`).join("")}</datalist>
+    ${ordnerCheckboxHtml(eintrag ? eintrag.ordner : ordner)}
     <div class="action-bar">
       <button type="button" class="btn btn-secondary pf-speichern" disabled>${eintrag ? "Änderungen speichern" : "In Datenbank speichern"}</button>
       <button type="button" class="btn-danger-text pf-abbrechen">Abbrechen</button>
@@ -391,9 +399,10 @@ function baueMaterialFormular({ katId, katFest, eintrag, onSave, onCancel }) {
     const ean = istEanAehnlich(c) ? c : "";
     const artNr = nr.value.trim() || (c && !ean ? c : "");
     const e = einheit.value.trim() || "Stck";
+    const ord = gewaehlterOrdner(form, eintrag ? eintrag.ordner : ordner);
     let ergebnis;
-    if (eintrag) { dbAendern(eintrag, { kat, name: n, nr: artNr, ean, einheit: e }); ergebnis = eintrag; }
-    else ergebnis = dbNeu({ kat, name: n, nr: artNr, ean, einheit: e });
+    if (eintrag) { dbAendern(eintrag, { kat, name: n, nr: artNr, ean, einheit: e }); setzeOrdner(eintrag, ord); ergebnis = eintrag; }
+    else ergebnis = dbNeu({ kat, name: n, nr: artNr, ean, einheit: e, ordner: ord });
     onSave(ergebnis);
   });
   form.querySelector(".pf-abbrechen").addEventListener("click", () => onCancel && onCancel());
@@ -403,11 +412,13 @@ function baueMaterialFormular({ katId, katFest, eintrag, onSave, onCancel }) {
 
 // Kompatibel zu den Auswahlfeldern im Bauaufmaß (Kategorie-Schlüssel ohne "sys:")
 function baueProduktFormular({ kat, onSave, onCancel }) {
-  return baueMaterialFormular({ katId: "sys:" + kat, katFest: true, onSave, onCancel });
+  return baueMaterialFormular({ katId: "sys:" + kat, katFest: true, onSave, onCancel, ordner: aktiverOrdnerId() });
 }
 
+// Auswahlfelder im Bauaufmaß: Material des eigenen Baustellen-Ordners zuerst, fremde Ordner ausgeblendet
 function produkteDerKategorie(kat) {
-  return dbMaterialDerKategorie("sys:" + kat);
+  const liste = dbMaterialDerKategorie("sys:" + kat).filter(imKontextSichtbar);
+  return liste.filter((m) => m.ordner).concat(liste.filter((m) => !m.ordner));
 }
 
 /* ---------- Verwaltungsansicht ---------- */
@@ -435,6 +446,7 @@ function oeffneDatenbank(suchtext) {
       </div>
       <div class="db-form"></div>
     </div>
+    <div class="db-ordner"></div>
     <p class="hint db-info"></p>
     <div class="db-liste view"></div>
     <details class="section-card">
@@ -452,6 +464,7 @@ function oeffneDatenbank(suchtext) {
   const formPlatz = view.querySelector(".db-form");
   const liste = view.querySelector(".db-liste");
   const info = view.querySelector(".db-info");
+  const ordnerPlatz = view.querySelector(".db-ordner");
   const offen = new Set();
   suche.value = suchtext || "";
 
@@ -480,8 +493,9 @@ function oeffneDatenbank(suchtext) {
     liste.innerHTML = "";
     let letzteGruppe = null;
     let sichtbar = 0;
+    renderOrdner(worte);
     for (const k of alleKategorien()) {
-      let eintraege = dbMaterialDerKategorie(k.id);
+      let eintraege = dbMaterialDerKategorie(k.id).filter((m) => !m.ordner);
       if (worte.length) {
         eintraege = eintraege.filter((m) => {
           const s = (m.name + " " + (m.nr || "") + " " + (m.ean || "") + " " + k.name + (istKombi(m) ? " " + kombiBeschreibung(m) : "")).toLowerCase();
@@ -597,7 +611,7 @@ function oeffneDatenbank(suchtext) {
     }
     info.textContent = worte.length
       ? `${sichtbar} Treffer`
-      : `${dbMaterial.length} Einträge in ${alleKategorien().length} Kategorien. Kategorie antippen zum Aufklappen, ☆ = zu Favoriten.`;
+      : `${dbMaterial.filter((m) => !m.ordner).length} Einträge in ${alleKategorien().length} Kategorien. Kategorie antippen zum Aufklappen, ☆ = zu Favoriten.`;
     const versteckt = dbKategorien.filter((k) => k.versteckt).length;
     if (versteckt && !worte.length) {
       const b = document.createElement("button");
@@ -608,13 +622,117 @@ function oeffneDatenbank(suchtext) {
       liste.appendChild(b);
     }
   };
+  // v19: Baustellen-Ordner oberhalb der Kategorien
+  const offeneOrdner = new Set();
+  const zeigeOrdnerFormular = (o, kombi) => {
+    formPlatz.innerHTML = "";
+    const fertig = () => { formPlatz.innerHTML = ""; offeneOrdner.add(o.id); render(); };
+    formPlatz.appendChild(kombi
+      ? baueKombiFormular({ katId: "sys:strahler", ordner: o.id, onSave: fertig, onCancel: () => { formPlatz.innerHTML = ""; } })
+      : baueMaterialFormular({ katId: "sys:strahler", ordner: o.id, onSave: fertig, onCancel: () => { formPlatz.innerHTML = ""; } }));
+    formPlatz.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  function renderOrdner(worte) {
+    ordnerPlatz.innerHTML = "";
+    const kopf = document.createElement("div");
+    kopf.className = "db-ordner-kopf";
+    kopf.innerHTML = `<h3 class="pl-gruppe">📁 Baustellen-Ordner</h3>`;
+    const neu = document.createElement("button");
+    neu.type = "button";
+    neu.className = "btn-link-accent";
+    neu.textContent = "＋ Baustellen-Ordner";
+    neu.addEventListener("click", () => {
+      const n = prompt("Name des Baustellen-Ordners (z. B. Baustelle oder Kunde):");
+      const o = n && legeOrdnerAn(n);
+      if (o) { offeneOrdner.add(o.id); render(); }
+    });
+    kopf.appendChild(neu);
+    ordnerPlatz.appendChild(kopf);
+    if (!dbOrdner.length && !worte.length) {
+      const p = document.createElement("p");
+      p.className = "hint";
+      p.textContent = "Für Material, das nur auf einer Baustelle gebraucht wird. Im Bauaufmaß den Ordner auswählen – dann steht dieses Material überall ganz oben und taucht in anderen Aufmaßen nicht auf. Nach der Baustelle Ordner einfach löschen.";
+      ordnerPlatz.appendChild(p);
+    }
+    for (const o of dbOrdner.slice().sort((a, b) => a.name.localeCompare(b.name, "de"))) {
+      let eintraege = materialImOrdner(o.id);
+      if (worte.length) {
+        eintraege = eintraege.filter((m) => worte.every((w) => (m.name + " " + (m.nr || "") + " " + (m.ean || "") + " " + o.name + (istKombi(m) ? " " + kombiBeschreibung(m) : "")).toLowerCase().includes(w)));
+        if (!eintraege.length) continue;
+      }
+      const det = document.createElement("details");
+      det.className = "section-card ordner-karte";
+      det.open = worte.length > 0 || offeneOrdner.has(o.id);
+      det.addEventListener("toggle", () => { if (det.open) offeneOrdner.add(o.id); else offeneOrdner.delete(o.id); });
+      det.innerHTML = `<summary><span></span></summary><div class="db-kat-aktionen"></div><ul class="pl-eintraege"></ul>`;
+      det.querySelector("summary span").textContent = `📁 ${o.name} (${eintraege.length})`;
+      const akt = det.querySelector(".db-kat-aktionen");
+      const knopf = (text, cls, fn, aria) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = cls;
+        b.textContent = text;
+        if (aria) b.setAttribute("aria-label", aria);
+        b.addEventListener("click", fn);
+        akt.appendChild(b);
+      };
+      knopf("＋ Material", "btn-link-accent", () => zeigeOrdnerFormular(o, false));
+      knopf("＋ Kombination", "btn-link-accent", () => zeigeOrdnerFormular(o, true));
+      knopf("✎", "btn-mini", () => {
+        const n = prompt("Ordner umbenennen:", o.name);
+        if (n && n.trim()) { o.name = n.trim(); speichereOrdner(); aktualisiereAbgeleiteteListen(); render(); }
+      }, "Ordner umbenennen");
+      knopf("🗑", "btn-mini btn-mini-danger", () => {
+        const n = materialImOrdner(o.id).length;
+        if (!confirm(`Baustellen-Ordner „${o.name}“${n ? ` mit ${n} Einträgen` : ""} löschen?\n\nBereits erfasste Aufmaße behalten ihre Einträge (auch die Teile von Kombinationen).`)) return;
+        loescheOrdner(o.id);
+        render();
+      }, "Ordner löschen");
+      const ul = det.querySelector("ul");
+      if (!eintraege.length) {
+        const li = document.createElement("li");
+        li.className = "hint";
+        li.textContent = "Noch kein Material – mit „＋ Material“ (Strahler, LED-Stripe, … per Kategorie) oder „＋ Kombination“ anlegen.";
+        ul.appendChild(li);
+      }
+      for (const m of eintraege) {
+        const li = document.createElement("li");
+        li.className = "pl-eintrag";
+        li.innerHTML = `<div class="info"><strong></strong><small></small></div>
+          <span class="komp-aktionen">
+            <button type="button" class="btn-mini" aria-label="Bearbeiten">✎</button>
+            <button type="button" class="btn-mini btn-mini-danger" aria-label="Löschen">✕</button>
+          </span>`;
+        li.querySelector("strong").textContent = m.name;
+        li.querySelector("small").textContent = kategorieName(m.kat) + " · " + (istKombi(m)
+          ? "Kombination: " + kombiBeschreibung(m)
+          : [m.einheit || "Stck", m.nr && `Art.-Nr. ${m.nr}`, m.ean && `EAN ${m.ean}`].filter(Boolean).join(" · "));
+        li.querySelector('[aria-label="Bearbeiten"]').addEventListener("click", () => {
+          const platz = document.createElement("li");
+          const fertig = () => { offeneOrdner.add(o.id); render(); };
+          platz.appendChild(istKombi(m)
+            ? baueKombiFormular({ katId: m.kat, eintrag: m, onSave: fertig, onCancel: render })
+            : baueMaterialFormular({ eintrag: m, onSave: fertig, onCancel: render }));
+          li.replaceWith(platz);
+        });
+        li.querySelector('[aria-label="Löschen"]').addEventListener("click", () => {
+          if (!confirm(`„${m.name}“ löschen?`)) return;
+          dbLoeschen(m.id);
+          render();
+        });
+        ul.appendChild(li);
+      }
+      ordnerPlatz.appendChild(det);
+    }
+  }
+
   let t = null;
   suche.addEventListener("input", () => { clearTimeout(t); t = setTimeout(render, 150); });
   render();
 
   // Sichern / Wiederherstellen
   view.querySelector(".db-export").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify({ kategorien: dbKategorien, material: dbMaterial }, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ kategorien: dbKategorien, material: dbMaterial, ordner: dbOrdner }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -631,6 +749,8 @@ function oeffneDatenbank(suchtext) {
       const d = JSON.parse(await datei.text());
       let n = 0;
       for (const k of d.kategorien || []) if (!dbKategorien.some((x) => x.id === k.id)) dbKategorien.push({ id: k.id, name: k.name });
+      for (const o of d.ordner || []) if (!dbOrdner.some((x) => x.id === o.id)) dbOrdner.push(o);
+      speichereOrdner();
       for (const m of d.material || []) {
         const i = dbMaterial.findIndex((x) => x.id === m.id);
         if (i >= 0) dbMaterial[i] = m; else dbMaterial.push(m);
@@ -686,7 +806,7 @@ function sucheKombiTeil(q) {
   return eigen.concat(katalog);
 }
 
-function baueKombiFormular({ katId, eintrag, onSave, onCancel }) {
+function baueKombiFormular({ katId, eintrag, onSave, onCancel, ordner }) {
   const form = document.createElement("div");
   form.className = "selected-article produkt-form kombi-form";
   form.innerHTML = `
@@ -697,6 +817,7 @@ function baueKombiFormular({ katId, eintrag, onSave, onCancel }) {
     <label>Bezeichnung der Kombination
       <input type="text" class="kf-name" placeholder="wird aus den Teilen vorgeschlagen" autocomplete="off">
     </label>
+    ${ordnerCheckboxHtml(eintrag ? eintrag.ordner : ordner)}
     <p class="hint kf-fehler" hidden></p>
     <div class="action-bar">
       <button type="button" class="btn btn-primary kf-speichern">Speichern</button>
@@ -773,12 +894,14 @@ function baueKombiFormular({ katId, eintrag, onSave, onCancel }) {
     const n = nameInp.value.trim();
     if (gueltig.length < 2) { fehler.textContent = "Bitte mindestens zwei Teile angeben."; fehler.hidden = false; return; }
     if (!n) { fehler.textContent = "Bitte eine Bezeichnung eingeben."; fehler.hidden = false; return; }
-    const doppelt = dbMaterial.find((x) => x.kat === katId && x !== eintrag && x.name.trim().toLowerCase() === n.toLowerCase());
+    const ord = gewaehlterOrdner(form, eintrag ? eintrag.ordner : ordner);
+    const doppelt = dbMaterial.find((x) => x.kat === katId && x !== eintrag && (x.ordner || "") === (ord || "") && x.name.trim().toLowerCase() === n.toLowerCase());
     if (doppelt) { fehler.textContent = "In dieser Kategorie gibt es schon einen Eintrag mit dieser Bezeichnung."; fehler.hidden = false; return; }
     let m;
-    if (eintrag) { dbAendern(eintrag, { name: n, teile: gueltig }); m = eintrag; }
+    if (eintrag) { dbAendern(eintrag, { name: n, teile: gueltig }); setzeOrdner(eintrag, ord); m = eintrag; }
     else {
       m = { id: neueId(), kat: katId, name: n, nr: "", ean: "", einheit: "Stck", teile: gueltig };
+      if (ord) m.ordner = ord;
       dbMaterial.push(m);
       speichereMaterial();
     }
@@ -803,4 +926,69 @@ function loeseKombisAuf(material) {
     }));
     material.splice(i, 1, ...teile);
   }
+}
+
+/* ---------- Baustellen-Ordner (v19) ----------
+   Material, das nur auf einer Baustelle gebraucht wird (z. B. bestimmte Strahler,
+   LED-Stripes, Kombinationen). Ein Bauaufmaß wird mit einem Ordner verknüpft
+   (`b.ordner`); dann steht dessen Material in allen Auswahlen ganz oben, Material
+   anderer Ordner ist ausgeblendet. Ordner samt Inhalt lässt sich wieder löschen. */
+
+function speichereOrdner() {
+  try { localStorage.setItem(STORAGE_KEY_ORDNER, JSON.stringify(dbOrdner)); } catch (e) { console.error(e); }
+}
+
+function ordnerName(id) {
+  const o = dbOrdner.find((x) => x.id === id);
+  return o ? o.name : "Baustelle";
+}
+
+function legeOrdnerAn(name) {
+  const n = (name || "").trim();
+  if (!n) return null;
+  let o = dbOrdner.find((x) => x.name.toLowerCase() === n.toLowerCase());
+  if (!o) {
+    o = { id: neueId(), name: n, erstellt: new Date().toISOString() };
+    dbOrdner.push(o);
+    speichereOrdner();
+  }
+  return o;
+}
+
+function materialImOrdner(id) {
+  return dbMaterial.filter((m) => m.ordner === id).sort((a, b) => kategorieName(a.kat).localeCompare(kategorieName(b.kat), "de") || a.name.localeCompare(b.name, "de"));
+}
+
+function loescheOrdner(id) {
+  dbMaterial = dbMaterial.filter((m) => m.ordner !== id);
+  dbOrdner = dbOrdner.filter((o) => o.id !== id);
+  speichereMaterial();
+  speichereOrdner();
+}
+
+// Ordner des gerade geöffneten Bauaufmaßes ("" = keiner, z. B. in der Datenbank-Verwaltung)
+function aktiverOrdnerId() {
+  const b = typeof currentBauaufmass !== "undefined" ? currentBauaufmass : null;
+  const id = b && b.ordner;
+  return id && dbOrdner.some((o) => o.id === id) ? id : "";
+}
+
+function imKontextSichtbar(m) {
+  return !m.ordner || m.ordner === aktiverOrdnerId();
+}
+
+function ordnerCheckboxHtml(ordnerId) {
+  if (!ordnerId || !dbOrdner.some((o) => o.id === ordnerId)) return "";
+  return `<label class="pf-ordner-wrap"><input type="checkbox" class="pf-ordner" checked>
+    Nur für Baustelle „${escapeHtml(ordnerName(ordnerId))}“ (📁 Baustellen-Ordner)</label>`;
+}
+
+function gewaehlterOrdner(form, ordnerId) {
+  const cb = form.querySelector(".pf-ordner");
+  return cb && cb.checked ? ordnerId : "";
+}
+
+function setzeOrdner(m, ordnerId) {
+  if (ordnerId) m.ordner = ordnerId; else delete m.ordner;
+  speichereMaterial();
 }
