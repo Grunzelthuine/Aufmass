@@ -788,3 +788,6 @@ main#app { padding-top: calc(var(--header-h) + var(--safe-top) + 14px); }
 .pf-ordner-wrap input { width: auto; margin-top: 2px; }
 .db-ordner-kopf { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .ordner-karte > summary { background: #fff7e6; }
+.pf-ordner-wrap { flex-direction: column; gap: 4px; }
+.pf-ordner-wrap select { width: 100%; }
+.db-verschieben { display: block; width: 100%; margin-top: 6px; font-size: 0.88rem; }

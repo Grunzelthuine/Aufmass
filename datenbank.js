@@ -581,6 +581,7 @@ function oeffneDatenbank(suchtext) {
         li.innerHTML = `<div class="info"><strong></strong><small></small></div>
           <span class="komp-aktionen">
             <button type="button" class="stern-btn" aria-label="Favorit"></button>
+            <button type="button" class="btn-mini" aria-label="In Baustellen-Ordner verschieben">📁</button>
             <button type="button" class="btn-mini" aria-label="Bearbeiten">✎</button>
             <button type="button" class="btn-mini btn-mini-danger" aria-label="Löschen">✕</button>
           </span>`;
@@ -589,6 +590,13 @@ function oeffneDatenbank(suchtext) {
           ? "Kombination: " + kombiBeschreibung(m)
           : [m.einheit || "Stck", m.nr && `Art.-Nr. ${m.nr}`, m.ean && `EAN ${m.ean}`].filter(Boolean).join(" · ");
         bindeSternKnopf(li.querySelector(".stern-btn"), sternDatenFuerDb(m));
+        li.querySelector('[aria-label="In Baustellen-Ordner verschieben"]').addEventListener("click", () => {
+          const info = li.querySelector(".info");
+          if (info.querySelector(".db-verschieben")) return;
+          const sel = baueVerschiebenAuswahl(m, (ziel) => { if (ziel) offeneOrdner.add(ziel); else offen.add(m.kat); render(); });
+          info.appendChild(sel);
+          sel.focus();
+        });
         li.querySelector('[aria-label="Bearbeiten"]').addEventListener("click", () => {
           const platz = document.createElement("li");
           platz.appendChild(istKombi(m)
@@ -700,6 +708,7 @@ function oeffneDatenbank(suchtext) {
         li.className = "pl-eintrag";
         li.innerHTML = `<div class="info"><strong></strong><small></small></div>
           <span class="komp-aktionen">
+            <button type="button" class="btn-mini" aria-label="In Baustellen-Ordner verschieben">📁</button>
             <button type="button" class="btn-mini" aria-label="Bearbeiten">✎</button>
             <button type="button" class="btn-mini btn-mini-danger" aria-label="Löschen">✕</button>
           </span>`;
@@ -707,6 +716,13 @@ function oeffneDatenbank(suchtext) {
         li.querySelector("small").textContent = kategorieName(m.kat) + " · " + (istKombi(m)
           ? "Kombination: " + kombiBeschreibung(m)
           : [m.einheit || "Stck", m.nr && `Art.-Nr. ${m.nr}`, m.ean && `EAN ${m.ean}`].filter(Boolean).join(" · "));
+        li.querySelector('[aria-label="In Baustellen-Ordner verschieben"]').addEventListener("click", () => {
+          const info = li.querySelector(".info");
+          if (info.querySelector(".db-verschieben")) return;
+          const sel = baueVerschiebenAuswahl(m, (ziel) => { if (ziel) offeneOrdner.add(ziel); else offen.add(m.kat); render(); });
+          info.appendChild(sel);
+          sel.focus();
+        });
         li.querySelector('[aria-label="Bearbeiten"]').addEventListener("click", () => {
           const platz = document.createElement("li");
           const fertig = () => { offeneOrdner.add(o.id); render(); };
@@ -977,15 +993,43 @@ function imKontextSichtbar(m) {
   return !m.ordner || m.ordner === aktiverOrdnerId();
 }
 
+// v19.1: Auswahl „Ablegen in“ (allgemein oder Baustellen-Ordner) in den Formularen
 function ordnerCheckboxHtml(ordnerId) {
-  if (!ordnerId || !dbOrdner.some((o) => o.id === ordnerId)) return "";
-  return `<label class="pf-ordner-wrap"><input type="checkbox" class="pf-ordner" checked>
-    Nur für Baustelle „${escapeHtml(ordnerName(ordnerId))}“ (📁 Baustellen-Ordner)</label>`;
+  if (!dbOrdner.length) return "";
+  const gueltig = ordnerId && dbOrdner.some((o) => o.id === ordnerId) ? ordnerId : "";
+  const opts = [`<option value=""${gueltig ? "" : " selected"}>Allgemeines Material</option>`]
+    .concat(dbOrdner.slice().sort((a, b) => a.name.localeCompare(b.name, "de"))
+      .map((o) => `<option value="${escapeHtml(o.id)}"${o.id === gueltig ? " selected" : ""}>📁 ${escapeHtml(o.name)} (nur diese Baustelle)</option>`));
+  return `<label class="pf-ordner-wrap">Ablegen in <select class="pf-ordner">${opts.join("")}</select></label>`;
 }
 
 function gewaehlterOrdner(form, ordnerId) {
-  const cb = form.querySelector(".pf-ordner");
-  return cb && cb.checked ? ordnerId : "";
+  const sel = form.querySelector(".pf-ordner");
+  if (!sel) return ordnerId && dbOrdner.some((o) => o.id === ordnerId) ? ordnerId : "";
+  return sel.value;
+}
+
+// Kleines Inline-Menü zum Verschieben eines Eintrags (allgemein <-> Baustellen-Ordner)
+function baueVerschiebenAuswahl(m, onFertig) {
+  const sel = document.createElement("select");
+  sel.className = "db-verschieben";
+  const add = (v, t) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); };
+  add("__x__", "Verschieben nach …");
+  if (m.ordner) add("", "Allgemeines Material");
+  for (const o of dbOrdner.slice().sort((a, b) => a.name.localeCompare(b.name, "de"))) if (o.id !== m.ordner) add(o.id, "📁 " + o.name);
+  add("__neu__", "＋ Neuer Baustellen-Ordner…");
+  sel.addEventListener("change", () => {
+    let ziel = sel.value;
+    if (ziel === "__x__") return;
+    if (ziel === "__neu__") {
+      const o = legeOrdnerAn(prompt("Name des Baustellen-Ordners:") || "");
+      if (!o) { sel.value = "__x__"; return; }
+      ziel = o.id;
+    }
+    setzeOrdner(m, ziel);
+    onFertig(ziel);
+  });
+  return sel;
 }
 
 function setzeOrdner(m, ordnerId) {
