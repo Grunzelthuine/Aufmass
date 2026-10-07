@@ -42,8 +42,9 @@ function diktatNormalisieren(text) {
 /* Schlüsselwörter. Reihenfolge = Vorrang bei Überschneidung (längere zuerst).
    art: schaltung | auslass | position | rollo | bedienung | melder | knx | stellen | stripe | geraet */
 const DIKTAT_MUSTER = [
-  // Schaltungen
-  { re: /knx[- ]?(licht|schaltung|beleuchtung|leuchte)[a-zäöüß]*/, art: "schaltung", typ: "knx" },
+  // Schaltungen / KNX-Stromkreise (v18.3)
+  { re: /stromkreis[a-zäöüß]*\s+(?:für\s+|der\s+|mit\s+)?steckdose[a-zäöüß]*|steckdosen[- ]?stromkreis[a-zäöüß]*/, art: "schaltung", typ: "knx_sk_steckdose" },
+  { re: /stromkreis[a-zäöüß]*\s+(?:für\s+|der\s+)?(?:beleuchtung|licht)[a-zäöüß]*|(?:beleuchtungs|licht)[- ]?stromkreis[a-zäöüß]*|knx[- ]?(licht|schaltung|beleuchtung|leuchte)[a-zäöüß]*/, art: "schaltung", typ: "knx_sk_licht" },
   { re: /hand[- ]?automatik[a-zäöüß]*/, art: "schaltung", typ: "handauto" },
   { re: /kontroll[- ]?wechsel[a-zäöüß]*/, art: "schaltung", typ: "kontrollwechsel" },
   { re: /kontroll[- ]?schalt[a-zäöüß]*/, art: "schaltung", typ: "kontroll" },
@@ -174,9 +175,11 @@ function werteDiktatAus(text) {
     if (mu.art === "schaltung") {
       const anz = Math.max(1, Math.round(n));
       const gruppe = [];
-      for (let k = 0; k < anz; k++) {
+      // Stromkreise: ein Eintrag mit Anzahl statt mehrerer Einträge
+      const istSK = schaltungTyp(mu.typ).stromkreis;
+      for (let k = 0; k < (istSK ? 1 : anz); k++) {
         const s = { art: "schaltung", typ: mu.typ, auslaesse: {}, stripes: [] };
-        if (mu.typ === "knx") s.knxArt = /dimm/.test(nach) ? "Dimmen" : /tunable|weiß ?abgleich/.test(nach) ? "Tunable White" : /rgb/.test(nach) ? "RGB(W)" : "Schalten";
+        if (istSK) s.schaltstellen = anz;
         aktionen.push(s);
         gruppe.push(s);
         letzteSchaltung = s;
@@ -185,7 +188,7 @@ function werteDiktatAus(text) {
       return;
     }
     if (mu.art === "auslass" || mu.art === "stripe") {
-      let s = ctx && ctx.art === "schaltung" ? ctx.obj : null;
+      let s = ctx && ctx.art === "schaltung" && ctx.obj.typ !== "knx_sk_steckdose" ? ctx.obj : null;
       if (!s) {
         s = { art: "schaltung", typ: "aus", auslaesse: {}, stripes: [], angenommen: true };
         aktionen.push(s);
@@ -282,18 +285,16 @@ function diktatPositionsName(key) {
   return positionNachKey(key).b;
 }
 
-/* v18: In KNX-Räumen werden genannte konventionelle Schaltungen zu KNX-Schaltungen
-   (Dimmer -> Dimmen, sonst Schalten), Handautomatik-Melder zu KNX-Meldern,
+/* v18/v18.3: In KNX-Räumen werden genannte konventionelle Schaltungen zu
+   „Stromkreis Beleuchtung“ (je 1 Stromkreis), Handautomatik-Melder zu KNX-Meldern,
    Rollos ohne Schalter/Taster. */
 function diktatAlsKnx(erg) {
   const neu = [];
   for (const a of erg.aktionen) {
-    if (a.art === "schaltung" && a.typ !== "knx") {
-      const vorher = a.typ;
-      a.knxArt = vorher === "dimmer" || vorher === "wechseldimmer" ? "Dimmen" : "Schalten";
-      a.typ = "knx";
-      delete a.schaltstellen;
-      if (a.angenommen) a.hinweis = "Schaltungsart nicht genannt – KNX Schalten angenommen";
+    if (a.art === "schaltung" && !schaltungTyp(a.typ).stromkreis) {
+      a.typ = "knx_sk_licht";
+      a.schaltstellen = 1;
+      if (a.angenommen) a.hinweis = "Als Stromkreis Beleuchtung übernommen";
       delete a.angenommen;
       if (a.melderArt) {
         neu.push(a, { art: "knx", typ: a.melderArt === "bewegung" ? "bewegung" : "praesenz", anzahl: a.melderAnzahl || 1 });
@@ -316,9 +317,8 @@ function diktatVorschau(ergebnis) {
     if (a.art === "schaltung") {
       const t = schaltungTyp(a.typ);
       const teile = [];
-      if (a.schaltstellen) teile.push(`${a.schaltstellen} ${t.stellenEinheit || "Schaltstellen"}`);
+      if (a.schaltstellen) teile.push(`${a.schaltstellen} ${t.stromkreis && a.schaltstellen === 1 ? "Stromkreis" : t.stellenEinheit || "Schaltstellen"}`);
       if (a.melderArt) teile.push(`${a.melderAnzahl || 1}× ${melderArt(a.melderArt).b}`);
-      if (a.knxArt) teile.push(a.knxArt);
       for (const x of BAU_AUSLAESSE) if (a.auslaesse[x.key]) teile.push(`${a.auslaesse[x.key]}× ${x.b}`);
       for (const m of a.stripes) teile.push(`LED-Stripe ${String(m).replace(".", ",")} m`);
       zeilen.push({ text: `${t.b}${teile.length ? ": " + teile.join(", ") : ""}`, hinweis: a.angenommen ? "Schaltungsart nicht genannt – Ausschaltung angenommen" : (a.hinweis || "") });
@@ -349,7 +349,6 @@ function wendeDiktatAn(raum, ergebnis) {
       const t = schaltungTyp(a.typ);
       const s = { id: neueId(), typ: t.key, schaltstellen: Math.max(t.min, a.schaltstellen || t.min), wand: 0, decke: 0, steckdose: 0, strahler: 0, bemerkung: "", stripes: [] };
       if (t.melder) Object.assign(s, { melderArt: a.melderArt || "praesenz", melderAnzahl: a.melderAnzahl || 1, melderTyp: "", melderNr: "" });
-      if (t.knx) s.knxArt = a.knxArt || "Schalten";
       for (const x of BAU_AUSLAESSE) s[x.key] = a.auslaesse[x.key] || 0;
       s.stripes = a.stripes.map((m) => ({ id: neueId(), meter: m, typ: "", nr: "" }));
       raum.schaltungen.push(s);

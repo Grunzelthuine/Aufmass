@@ -79,8 +79,19 @@ const BAU_SCHALTUNGSTYPEN = [
   { key: "kreuz", b: "Kreuzschaltung", min: 3 },
   { key: "taster", b: "Tasterschaltung", min: 1, stellenLabel: "Anzahl Taster", stellenEinheit: "Taster" },
   { key: "handauto", b: "Handautomatik-Schalter", min: 1, ohneStellen: true, melder: true },
-  { key: "knx", b: "KNX-Schaltung", min: 1, ohneStellen: true, knx: true, ohneAbdeckung: true }
+  { key: "knx", b: "KNX-Schaltung", min: 1, ohneStellen: true, knx: true, ohneAbdeckung: true, versteckt: true }, // alt (bis v18.2), wird migriert
+  // v18.3: KNX-Räume – Stromkreise mit Anzahl (Aktor wird in der Verteilung erfasst)
+  { key: "knx_sk_licht", b: "Stromkreis Beleuchtung", min: 1, knx: true, stromkreis: true, ohneAbdeckung: true,
+    stellenLabel: "Anzahl Stromkreise", stellenEinheit: "Stromkreise", auslaesse: ["decke", "wand", "strahler"], stripes: true },
+  { key: "knx_sk_steckdose", b: "Stromkreis Steckdosen", min: 1, knx: true, stromkreis: true, ohneAbdeckung: true,
+    stellenLabel: "Anzahl Stromkreise", stellenEinheit: "Stromkreise", auslaesse: [], stripes: false }
 ];
+const BAU_KNX_STROMKREISE = BAU_SCHALTUNGSTYPEN.filter((t) => t.stromkreis);
+
+// Auslässe, die eine Schaltung haben kann (Stromkreise: eingeschränkte Liste)
+function auslaesseFuer(t, s) {
+  return t.auslaesse ? BAU_AUSLAESSE.filter((a) => t.auslaesse.includes(a.key) || (s && s[a.key] > 0)) : BAU_AUSLAESSE;
+}
 
 // Art der KNX-Lichtschaltung (v15)
 const BAU_KNX_LICHTARTEN = ["Schalten", "Dimmen", "Tunable White", "RGB(W)"];
@@ -394,6 +405,13 @@ function migriereRaum(raum) {
     if (p[alt] > 0) raum.melder.push(neueKomponente(komponentenTyp(MELDER_TYPEN, neu), { anzahl: p[alt] }));
     delete p[alt];
   }
+  // v18.3: alte KNX-Schaltungen (Schalten/Dimmen/…) -> Stromkreis Beleuchtung
+  for (const s of raum.schaltungen || []) {
+    if (s.typ !== "knx") continue;
+    s.typ = "knx_sk_licht";
+    s.schaltstellen = 1;
+    delete s.knxArt;
+  }
 }
 
 function rolloBedienung(key) {
@@ -417,6 +435,7 @@ function melderArt(key) {
 function schaltungBezeichnung(s) {
   const t = schaltungTyp(s.typ);
   if (t.melder) return `${t.b} mit ${melderArt(s.melderArt).b}`;
+  if (t.stromkreis) return t.b;
   if (t.knx) return `${t.b} (${s.knxArt || "Schalten"})`;
   if (t.stellenEinheit) return `${t.b} (${s.schaltstellen} ${t.stellenEinheit})`;
   return t.b + (s.schaltstellen > 1 ? ` (${s.schaltstellen} Schaltstellen)` : "");
@@ -429,8 +448,10 @@ function komponenteMitTyp(bez, item) {
 
 function raumZusammenfassung(raum) {
   const teile = [];
-  const nS = raum.schaltungen.length;
+  const nS = raum.schaltungen.filter((s) => !schaltungTyp(s.typ).stromkreis).length;
   if (nS) teile.push(`${nS} Schaltung${nS === 1 ? "" : "en"}`);
+  const nSK = raum.schaltungen.filter((s) => schaltungTyp(s.typ).stromkreis).reduce((x, s) => x + (s.schaltstellen || 0), 0);
+  if (nSK) teile.push(`${nSK} Stromkreis${nSK === 1 ? "" : "e"}`);
   const nR = (raum.rollos || []).reduce((s, r) => s + r.anzahl, 0);
   if (nR) teile.push(`${nR} Rollo${nR === 1 ? "" : "s"}`);
   const nK = (raum.knx || []).reduce((s, k) => s + (k.anzahl || 0), 0);
@@ -1152,18 +1173,16 @@ function oeffneRaum(etage, raum) {
   renderSchaltungen();
   // In KNX-Räumen nur KNX-Schaltungen (direkt mit Art wählbar)
   const schaltOptionen = knxRaum
-    ? BAU_KNX_LICHTARTEN.map((a) => ({ value: "knx:" + a, text: "KNX – " + a }))
-    : BAU_SCHALTUNGSTYPEN.map((t) => ({ value: t.key, text: t.b }));
+    ? BAU_KNX_STROMKREISE.map((t) => ({ value: t.key, text: t.b }))
+    : BAU_SCHALTUNGSTYPEN.filter((t) => !t.knx).map((t) => ({ value: t.key, text: t.b }));
   document.getElementById("r_schaltungAuswahl").appendChild(baueAuswahl({
-    platzhalter: knxRaum ? "＋ KNX-Schaltung hinzufügen…" : "＋ Schaltung hinzufügen…",
+    platzhalter: knxRaum ? "＋ Stromkreis hinzufügen…" : "＋ Schaltung hinzufügen…",
     gruppen: [{ optionen: schaltOptionen }],
     frei: null,
     onAdd: (wahl) => {
-      const knxArt = wahl.startsWith("knx:") ? wahl.slice(4) : null;
-      const t = schaltungTyp(knxArt ? "knx" : wahl);
+      const t = schaltungTyp(wahl);
       const s = { id: neueId(), typ: t.key, schaltstellen: t.min, wand: 0, decke: 0, steckdose: 0, strahler: 0, bemerkung: "" };
       if (t.melder) Object.assign(s, { melderArt: "praesenz", melderAnzahl: 1, melderTyp: "", melderNr: "" });
-      if (t.knx) s.knxArt = knxArt || "Schalten";
       s.stripes = [];
       raum.schaltungen.push(s);
       autosave();
@@ -1336,7 +1355,12 @@ function renderSchaltungen() {
   const anzahl = document.getElementById("r_anzahlSchaltungen");
   liste.innerHTML = "";
   anzahl.textContent = raum.schaltungen.length;
-  document.getElementById("r_schaltungenLeer").hidden = raum.schaltungen.length !== 0;
+  const knxR = istKnxRaum(currentBauaufmass, raum);
+  const titel = document.getElementById("r_schaltTitel");
+  if (titel) titel.textContent = knxR ? "Stromkreise (KNX)" : "Beleuchtung";
+  const leer = document.getElementById("r_schaltungenLeer");
+  leer.hidden = raum.schaltungen.length !== 0;
+  leer.textContent = knxR ? "Noch kein Stromkreis – unten Stromkreis wählen." : "Noch keine Schaltung – unten Schaltungsart wählen.";
 
   raum.schaltungen.forEach((s, i) => {
     const t = schaltungTyp(s.typ);
@@ -1371,14 +1395,14 @@ function renderSchaltungen() {
       });
       mp.classList.add("melder-typ");
       zaehler.appendChild(mp);
-    } else if (t.knx) {
+    } else if (t.knx && !t.stromkreis) {
       zaehler.appendChild(baueSegment("Art", BAU_KNX_LICHTARTEN, s.knxArt || "Schalten", (v) => { s.knxArt = v; autosave(); }));
     } else {
       const zs = baueZaehler(t.stellenLabel || "Schaltstellen", s.schaltstellen, t.min, (v) => { s.schaltstellen = v; autosave(); });
       zs.classList.add("zaehler-schaltstellen");
       zaehler.appendChild(zs);
     }
-    for (const a of BAU_AUSLAESSE) {
+    for (const a of auslaesseFuer(t, s)) {
       zaehler.appendChild(baueZaehler(a.b, s[a.key] || 0, 0, (v) => {
         const vorher = s[a.key] || 0;
         s[a.key] = v;
@@ -1425,7 +1449,7 @@ function renderSchaltungen() {
       renderSchaltungen();
     });
     stripesEl.appendChild(plusStripe);
-    zaehler.appendChild(stripesEl);
+    if (t.stripes !== false) zaehler.appendChild(stripesEl);
     if (!t.ohneAbdeckung) karte.appendChild(baueAbdeckungsAuswahl(s));
     karte.appendChild(baueTextFeld("Bemerkung (optional, z. B. Spiegel, Esstisch)", s.bemerkung, (v) => { s.bemerkung = v; autosave(); }));
     liste.appendChild(karte);
@@ -1636,12 +1660,14 @@ function bauRaumZeilen(b, raum) {
   const zeilen = [];
   const raumAbd = raumAbdeckung(b, raum);
   const eigeneAbd = (obj) => ((obj.abdeckung || "").trim() && obj.abdeckung.trim() !== raumAbd ? ` · Abdeckung ${obj.abdeckung.trim()}` : "");
-  if (raum.schaltungen.length) {
+  const licht = raum.schaltungen.filter((s) => s.typ !== "knx_sk_steckdose");
+  const skSteckdosen = raum.schaltungen.filter((s) => s.typ === "knx_sk_steckdose" && s.schaltstellen > 0);
+  if (licht.length) {
     zeilen.push({ gruppe: "Beleuchtung" });
-    raum.schaltungen.forEach((s) => {
+    licht.forEach((s) => {
       const t = schaltungTyp(s.typ);
       const bem = (s.bemerkung || "").trim();
-      zeilen.push({ b: schaltungBezeichnung(s) + (bem ? ` – ${bem}` : "") + (t.ohneAbdeckung ? "" : eigeneAbd(s)), menge: 1, e: "Stck", schaltung: true });
+      zeilen.push({ b: schaltungBezeichnung(s) + (bem ? ` – ${bem}` : "") + (t.ohneAbdeckung ? "" : eigeneAbd(s)), menge: t.stromkreis ? s.schaltstellen : 1, e: "Stck", schaltung: true });
       if (t.melder && s.melderAnzahl > 0) zeilen.push({ b: melderZeile(s), nr: s.melderNr || "", menge: s.melderAnzahl, e: "Stck", unter: true });
       for (const a of BAU_AUSLAESSE) {
         if (!(s[a.key] > 0)) continue;
@@ -1651,6 +1677,13 @@ function bauRaumZeilen(b, raum) {
       for (const st of s.stripes || []) {
         if (st.meter > 0) zeilen.push({ b: stripeZeile(st), nr: st.nr || "", menge: st.meter, e: "m", unter: true });
       }
+    });
+  }
+  if (skSteckdosen.length) {
+    zeilen.push({ gruppe: "Steckdosen-Stromkreise" });
+    skSteckdosen.forEach((s) => {
+      const bem = (s.bemerkung || "").trim();
+      zeilen.push({ b: schaltungBezeichnung(s) + (bem ? ` – ${bem}` : ""), menge: s.schaltstellen, e: "Stck", schaltung: true });
     });
   }
   const rollos = (raum.rollos || []).filter((r) => r.anzahl > 0);
@@ -1729,6 +1762,7 @@ function summenMap() {
 
 function bauGesamtZeilen(b) {
   const schaltungen = summenMap();
+  const stromkreise = summenMap();
   const melderHA = summenMap();
   const auslaesseSM = summenMap();
   const stripes = summenMap();
@@ -1758,7 +1792,8 @@ function bauGesamtZeilen(b) {
       for (const s of raum.schaltungen) {
         const st = schaltungTyp(s.typ);
         const abd = st.ohneAbdeckung ? "" : positionsAbdeckung(b, raum, s.abdeckung);
-        schaltungen.add(mitAbdeckung(schaltungBezeichnung(s), abd), 1, "Stck", "", rangSchaltung(s.typ));
+        if (st.stromkreis) stromkreise.add(schaltungBezeichnung(s), s.schaltstellen || 0, "Stck", "", rangSchaltung(s.typ));
+        else schaltungen.add(mitAbdeckung(schaltungBezeichnung(s), abd), 1, "Stck", "", rangSchaltung(s.typ));
         if (st.melder) melderHA.add(melderZeile(s), s.melderAnzahl || 0, "Stck", s.melderNr);
         BAU_AUSLAESSE.forEach((a, idx) => {
           if (!(s[a.key] > 0)) return;
@@ -1803,6 +1838,7 @@ function bauGesamtZeilen(b) {
 
   const zeilen = [];
   if (schaltungen.size) zeilen.push({ gruppe: "Beleuchtung – Schaltungen" }, ...schaltungen.zeilen());
+  if (stromkreise.size) zeilen.push({ gruppe: "Stromkreise (KNX)" }, ...stromkreise.zeilen());
   if (melderHA.size) zeilen.push({ gruppe: "Beleuchtung – Melder (Handautomatik)" }, ...melderHA.zeilen());
   if (auslaesseSM.size) zeilen.push({ gruppe: "Beleuchtung – Auslässe" }, ...auslaesseSM.zeilen());
   if (stripes.size) zeilen.push({ gruppe: "Beleuchtung – LED-Stripes" }, ...stripes.zeilen());
