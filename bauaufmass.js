@@ -2104,5 +2104,5 @@ function erstelleBauPdf(b) {
     doc.setTextColor(0);
   }
 
-  doc.save(bauDateiname(b));
+  gibPdfAus(doc, bauDateiname(b));
 }

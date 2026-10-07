@@ -1710,7 +1710,28 @@ function erstellePdf(a) {
     }
   });
 
-  doc.save(dateiname(a));
+  gibPdfAus(doc, dateiname(a));
+}
+
+/* v19.2: PDF ausgeben. Auf dem iPhone/iPad (und anderen Geräten mit Teilen-Funktion)
+   öffnet sich direkt das Teilen-Menü mit genau EINER sauberen PDF-Datei
+   (Mail, AirDrop, In Dateien sichern …) – ohne zusätzlichen Text, der in Mail
+   sonst als zweiter Anhang auftaucht. Sonst normaler Download. */
+function gibPdfAus(doc, name) {
+  let datei = null;
+  try {
+    const blob = doc.output("blob");
+    datei = new File([blob], name, { type: "application/pdf" });
+  } catch (e) { datei = null; }
+  const mobil = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (datei && mobil && navigator.canShare && navigator.canShare({ files: [datei] })) {
+    navigator.share({ files: [datei] }).catch((err) => {
+      if (err && err.name === "AbortError") return; // abgebrochen
+      doc.save(name);                                 // z. B. Geste abgelaufen -> Download
+    });
+    return;
+  }
+  doc.save(name);
 }
 
 /* ---------- Init ---------- */
