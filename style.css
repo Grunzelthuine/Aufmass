@@ -774,3 +774,10 @@ main#app { padding-top: calc(var(--header-h) + var(--safe-top) + 14px); }
 .einheit-wahl button + button { border-left: 1px solid var(--color-border); }
 .einheit-wahl button.aktiv { background: var(--color-primary); color: #fff; }
 .stripe-box .segment-feld { margin-bottom: 4px; }
+
+/* v18.5: Kombinationsprodukte */
+.kombi-form .kf-titel { display: block; margin-bottom: 2px; }
+.kombi-teil { border: 1px solid var(--color-border); border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: #fff; }
+.kombi-teil .kt-name { width: 100%; margin-top: 4px; }
+.kombi-teil .kt-nr { display: block; margin-top: 2px; }
+.kombi-hinweis { margin: 2px 0 6px; font-size: 0.8rem; }

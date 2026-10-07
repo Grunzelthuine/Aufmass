@@ -618,7 +618,8 @@ function bindeMaterialDiktat(material, onHinzufuegen) {
     undo.className = "btn-danger-text";
     undo.textContent = "↶ Rückgängig";
     undo.addEventListener("click", () => {
-      for (let i = material.length - 1; i >= 0; i--) if (neueIds.includes(material[i].id)) material.splice(i, 1);
+      // „id~n“ = Teil eines aufgelösten Kombinationsprodukts (v18.5)
+      for (let i = material.length - 1; i >= 0; i--) if (neueIds.includes(String(material[i].id).split("~")[0])) material.splice(i, 1);
       onHinzufuegen();
       info.innerHTML = '<p class="hint">Rückgängig gemacht.</p>';
     });

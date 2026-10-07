@@ -843,6 +843,12 @@ function klonMaterialTabs(platzhalterId) {
    `onHinzufuegen` wird nach jedem erfolgreichen Hinzufügen aufgerufen
    (übernimmt Re-Rendering + Autosave beim Aufrufer). */
 function bindeMaterialAuswahl(material, onHinzufuegen, optionen) {
+  // v18.5: Kombinationsprodukte (z. B. Gehäuse + Leuchtmittel) beim Hinzufügen in ihre Teile auflösen
+  const nachHinzufuegen = onHinzufuegen;
+  onHinzufuegen = () => {
+    if (typeof loeseKombisAuf === "function") loeseKombisAuf(material);
+    nachHinzufuegen();
+  };
   // v18: Tab „Diktat“ (nur Aufmaß und Packliste)
   const diktatTab = document.querySelector('.tab[data-tab="diktat"]');
   if (diktatTab) diktatTab.hidden = !(optionen && optionen.diktat);

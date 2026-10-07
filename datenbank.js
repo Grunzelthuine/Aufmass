@@ -484,7 +484,7 @@ function oeffneDatenbank(suchtext) {
       let eintraege = dbMaterialDerKategorie(k.id);
       if (worte.length) {
         eintraege = eintraege.filter((m) => {
-          const s = (m.name + " " + (m.nr || "") + " " + (m.ean || "") + " " + k.name).toLowerCase();
+          const s = (m.name + " " + (m.nr || "") + " " + (m.ean || "") + " " + k.name + (istKombi(m) ? " " + kombiBeschreibung(m) : "")).toLowerCase();
           return worte.every((w) => s.includes(w));
         });
         if (!eintraege.length) continue;
@@ -512,6 +512,22 @@ function oeffneDatenbank(suchtext) {
       plus.textContent = "＋ Material in dieser Kategorie";
       plus.addEventListener("click", () => zeigeFormular({ katId: k.id }));
       akt.appendChild(plus);
+      if (KOMBI_KATEGORIEN.includes(k.id)) {
+        const kombi = document.createElement("button");
+        kombi.type = "button";
+        kombi.className = "btn-link-accent";
+        kombi.textContent = "＋ Kombination";
+        kombi.addEventListener("click", () => {
+          formPlatz.innerHTML = "";
+          formPlatz.appendChild(baueKombiFormular({
+            katId: k.id,
+            onSave: (m) => { formPlatz.innerHTML = ""; offen.add(m.kat); render(); },
+            onCancel: () => { formPlatz.innerHTML = ""; }
+          }));
+          formPlatz.scrollIntoView({ block: "start", behavior: "smooth" });
+        });
+        akt.appendChild(kombi);
+      }
       if (!k.system && k.id !== KAT_EIGENE) {
         const ren = document.createElement("button");
         ren.type = "button";
@@ -555,15 +571,19 @@ function oeffneDatenbank(suchtext) {
             <button type="button" class="btn-mini btn-mini-danger" aria-label="Löschen">✕</button>
           </span>`;
         li.querySelector("strong").textContent = m.name;
-        li.querySelector("small").textContent = [m.einheit || "Stck", m.nr && `Art.-Nr. ${m.nr}`, m.ean && `EAN ${m.ean}`].filter(Boolean).join(" · ");
+        li.querySelector("small").textContent = istKombi(m)
+          ? "Kombination: " + kombiBeschreibung(m)
+          : [m.einheit || "Stck", m.nr && `Art.-Nr. ${m.nr}`, m.ean && `EAN ${m.ean}`].filter(Boolean).join(" · ");
         bindeSternKnopf(li.querySelector(".stern-btn"), sternDatenFuerDb(m));
         li.querySelector('[aria-label="Bearbeiten"]').addEventListener("click", () => {
           const platz = document.createElement("li");
-          platz.appendChild(baueMaterialFormular({
-            eintrag: m,
-            onSave: (x) => { offen.add(x.kat); render(); },
-            onCancel: render
-          }));
+          platz.appendChild(istKombi(m)
+            ? baueKombiFormular({ katId: m.kat, eintrag: m, onSave: (x) => { offen.add(x.kat); render(); }, onCancel: render })
+            : baueMaterialFormular({
+              eintrag: m,
+              onSave: (x) => { offen.add(x.kat); render(); },
+              onCancel: render
+            }));
           li.replaceWith(platz);
         });
         li.querySelector('[aria-label="Löschen"]').addEventListener("click", () => {
@@ -625,4 +645,162 @@ function oeffneDatenbank(suchtext) {
     }
     e.target.value = "";
   });
+}
+
+/* ---------- Kombinationsprodukte (v18.5) ----------
+   Ein Datenbank-Eintrag mit `teile: [{ name, nr, menge }]` – z. B. Strahlergehäuse
+   + Leuchtmittel. Wird im Bauaufmaß wie ein normales Produkt ausgewählt; im PDF
+   stehen darunter die Teile (Menge = Anzahl × Menge je Stück).
+   Anlegbar in den Kategorien aus KOMBI_KATEGORIEN. */
+const KOMBI_KATEGORIEN = ["sys:strahler"];
+
+function istKombi(m) {
+  return !!(m && Array.isArray(m.teile) && m.teile.length);
+}
+
+// Kombination zu einem im Aufmaß gespeicherten Produkt finden (erst über die Id, sonst über den Namen)
+function findeKombi(katId, name, id) {
+  let m = id ? dbMaterial.find((x) => x.id === id) : null;
+  const n = (name || "").trim().toLowerCase();
+  if (!m || m.name.trim().toLowerCase() !== n) m = n ? dbMaterial.find((x) => x.kat === katId && x.name.trim().toLowerCase() === n) : null;
+  return istKombi(m) ? m : null;
+}
+
+function kombiBeschreibung(m) {
+  return m.teile.map((t) => `${t.menge > 1 ? t.menge + "× " : ""}${t.name}`).join(" + ");
+}
+
+// Suche für ein Teil: eigene Datenbank (alle Kategorien, ohne Kombinationen) + Großhandelskatalog
+function sucheKombiTeil(q) {
+  const worte = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!worte.length) return [];
+  const eigen = dbMaterial
+    .filter((m) => !istKombi(m) && worte.every((w) => (m.name + " " + (m.nr || "") + " " + (m.ean || "")).toLowerCase().includes(w)))
+    .slice(0, 8)
+    .map((m) => ({ name: m.name, nr: m.nr || "", info: kategorieName(m.kat), eigen: true }));
+  let katalog = [];
+  if (typeof sucheMaterial === "function" && (typeof materialDBReady === "undefined" || materialDBReady)) {
+    katalog = sucheMaterial(q, 20).filter((a) => !a._eigen && !eigen.some((e) => e.nr && e.nr === a.n)).slice(0, 10)
+      .map((a) => ({ name: a.b, nr: a.n || "", info: "Katalog" + (a.n ? " · Art.-Nr. " + a.n : "") }));
+  }
+  return eigen.concat(katalog);
+}
+
+function baueKombiFormular({ katId, eintrag, onSave, onCancel }) {
+  const form = document.createElement("div");
+  form.className = "selected-article produkt-form kombi-form";
+  form.innerHTML = `
+    <strong class="kf-titel">${eintrag ? "Kombination bearbeiten" : "Neue Kombination"}</strong>
+    <p class="hint">Zum Beispiel Strahlergehäuse und Leuchtmittel. Teile aus der Datenbank oder dem Katalog suchen oder frei eintippen.</p>
+    <div class="kf-teile"></div>
+    <button type="button" class="btn-link-accent kf-plus">＋ weiteres Teil</button>
+    <label>Bezeichnung der Kombination
+      <input type="text" class="kf-name" placeholder="wird aus den Teilen vorgeschlagen" autocomplete="off">
+    </label>
+    <p class="hint kf-fehler" hidden></p>
+    <div class="action-bar">
+      <button type="button" class="btn btn-primary kf-speichern">Speichern</button>
+      <button type="button" class="btn btn-secondary kf-abbrechen">Abbrechen</button>
+    </div>`;
+  const teile = eintrag ? eintrag.teile.map((t) => ({ ...t })) : [{ name: "", nr: "", menge: 1 }, { name: "", nr: "", menge: 1 }];
+  const platz = form.querySelector(".kf-teile");
+  const nameInp = form.querySelector(".kf-name");
+  let nameManuell = !!eintrag;
+  nameInp.value = eintrag ? eintrag.name : "";
+  nameInp.addEventListener("input", () => { nameManuell = nameInp.value.trim() !== ""; });
+  const vorschlag = () => {
+    if (nameManuell) return;
+    nameInp.value = teile.filter((t) => t.name.trim()).map((t) => t.name.trim()).join(" + ");
+  };
+
+  const renderTeile = () => {
+    platz.innerHTML = "";
+    teile.forEach((t, i) => {
+      const box = document.createElement("div");
+      box.className = "kombi-teil";
+      box.innerHTML = `
+        <div class="stripe-kopf"><span>Teil ${i + 1}</span>${teile.length > 2 ? '<button type="button" class="btn-danger-text" aria-label="Teil entfernen">✕</button>' : ""}</div>
+        <input type="search" class="kt-name" placeholder="${i === 0 ? "z. B. Einbaurahmen / Gehäuse" : "z. B. GU10 LED 5W 3000K"}" autocomplete="off">
+        <ul class="suggest-list kt-treffer" hidden></ul>
+        <small class="kt-nr muted"></small>`;
+      const inp = box.querySelector(".kt-name");
+      const ul = box.querySelector(".kt-treffer");
+      const nrEl = box.querySelector(".kt-nr");
+      inp.value = t.name;
+      nrEl.textContent = t.nr ? "Art.-Nr. " + t.nr : "";
+      let timer = null;
+      inp.addEventListener("input", () => {
+        t.name = inp.value;
+        t.nr = "";
+        nrEl.textContent = "";
+        vorschlag();
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          const q = inp.value.trim();
+          ul.innerHTML = "";
+          if (q.length < 2) { ul.hidden = true; return; }
+          const treffer = sucheKombiTeil(q);
+          if (!treffer.length) ul.innerHTML = '<li class="no-result">Keine Treffer – Text wird so übernommen</li>';
+          for (const x of treffer) {
+            const li = document.createElement("li");
+            li.innerHTML = `${escapeHtml(x.name)}<small>${x.eigen ? "Datenbank · " : ""}${escapeHtml(x.info)}${x.eigen && x.nr ? " · Art.-Nr. " + escapeHtml(x.nr) : ""}</small>`;
+            li.addEventListener("click", () => {
+              t.name = x.name;
+              t.nr = x.nr;
+              inp.value = x.name;
+              nrEl.textContent = x.nr ? "Art.-Nr. " + x.nr : "";
+              ul.hidden = true;
+              vorschlag();
+            });
+            ul.appendChild(li);
+          }
+          ul.hidden = false;
+        }, 200);
+      });
+      const del = box.querySelector(".btn-danger-text");
+      if (del) del.addEventListener("click", () => { teile.splice(i, 1); vorschlag(); renderTeile(); });
+      box.appendChild(baueZaehler("Menge je Stück", t.menge || 1, 1, (v) => { t.menge = v; }));
+      platz.appendChild(box);
+    });
+  };
+  renderTeile();
+  form.querySelector(".kf-plus").addEventListener("click", () => { teile.push({ name: "", nr: "", menge: 1 }); renderTeile(); });
+
+  form.querySelector(".kf-speichern").addEventListener("click", () => {
+    const gueltig = teile.filter((t) => t.name.trim()).map((t) => ({ name: t.name.trim(), nr: (t.nr || "").trim(), menge: t.menge || 1 }));
+    const fehler = form.querySelector(".kf-fehler");
+    vorschlag();
+    const n = nameInp.value.trim();
+    if (gueltig.length < 2) { fehler.textContent = "Bitte mindestens zwei Teile angeben."; fehler.hidden = false; return; }
+    if (!n) { fehler.textContent = "Bitte eine Bezeichnung eingeben."; fehler.hidden = false; return; }
+    const doppelt = dbMaterial.find((x) => x.kat === katId && x !== eintrag && x.name.trim().toLowerCase() === n.toLowerCase());
+    if (doppelt) { fehler.textContent = "In dieser Kategorie gibt es schon einen Eintrag mit dieser Bezeichnung."; fehler.hidden = false; return; }
+    let m;
+    if (eintrag) { dbAendern(eintrag, { name: n, teile: gueltig }); m = eintrag; }
+    else {
+      m = { id: neueId(), kat: katId, name: n, nr: "", ean: "", einheit: "Stck", teile: gueltig };
+      dbMaterial.push(m);
+      speichereMaterial();
+    }
+    onSave(m);
+  });
+  form.querySelector(".kf-abbrechen").addEventListener("click", () => onCancel && onCancel());
+  setTimeout(() => { const f = form.querySelector(".kt-name"); if (f && !eintrag) f.focus(); }, 0);
+  return form;
+}
+
+// Materialliste (Aufmaß, Packliste, Raum): Zeilen, die einem Kombinationsprodukt entsprechen, durch dessen Teile ersetzen
+function loeseKombisAuf(material) {
+  for (let i = material.length - 1; i >= 0; i--) {
+    const m = material[i];
+    if (String(m.id).includes("~")) continue;
+    const n = (m.bezeichnung || "").trim().toLowerCase();
+    const k = n && dbMaterial.find((x) => istKombi(x) && x.name.trim().toLowerCase() === n);
+    if (!k) continue;
+    const teile = k.teile.map((t, j) => ({
+      id: m.id + "~" + j, bezeichnung: t.name, artikelnummer: t.nr || "", einheit: "Stck",
+      menge: rundeMenge((m.menge || 0) * (t.menge || 1)), quelle: "standard", erledigt: false, kombi: k.name
+    }));
+    material.splice(i, 1, ...teile);
+  }
 }

@@ -755,12 +755,13 @@ function baueProduktAuswahl({ kat, wert, leerText, label, onChange }) {
     const liste = produkteDerKategorie(kat);
     let gewaehlt = "";
     for (const p of liste) {
-      add("p:" + p.id, p.name + (p.nr ? ` · ${p.nr}` : ""));
+      add("p:" + p.id, istKombi(p) ? `${p.name} (Kombination)` : p.name + (p.nr ? ` · ${p.nr}` : ""));
       if (aktuell && p.name === aktuell) gewaehlt = "p:" + p.id;
     }
     if (aktuell && !gewaehlt) { add("x:", aktuell + " (Freitext)"); gewaehlt = "x:"; }
     add("__frei__", "✎ Freitext eingeben…");
     add("__neu__", "＋ Neues Produkt anlegen (Liste / EAN-Scan)…");
+    if (KOMBI_KATEGORIEN.includes("sys:" + kat)) add("__kombi__", "＋ Kombination anlegen (z. B. Gehäuse + Leuchtmittel)…");
     select.value = gewaehlt;
   };
   const setze = (name, nr, produktId) => {
@@ -788,6 +789,12 @@ function baueProduktAuswahl({ kat, wert, leerText, label, onChange }) {
     } else if (v === "__neu__") {
       formPlatz.appendChild(baueProduktFormular({
         kat,
+        onSave: (p) => { formPlatz.innerHTML = ""; setze(p.name, p.nr, p.id); },
+        onCancel: () => { formPlatz.innerHTML = ""; fuelle(); }
+      }));
+    } else if (v === "__kombi__") {
+      formPlatz.appendChild(baueKombiFormular({
+        katId: "sys:" + kat,
         onSave: (p) => { formPlatz.innerHTML = ""; setze(p.name, p.nr, p.id); },
         onCancel: () => { formPlatz.innerHTML = ""; fuelle(); }
       }));
@@ -1413,10 +1420,17 @@ function renderSchaltungen() {
       if (a.key === "strahler" && s.strahler > 0) {
         const sp = baueProduktAuswahl({
           kat: "strahler", wert: s.strahlerTyp, label: "Typ Strahler", leerText: "Typ Strahler: – offen –",
-          onChange: ({ name, nr }) => { s.strahlerTyp = name; s.strahlerNr = nr; autosave(); }
+          onChange: ({ name, nr, produktId }) => { s.strahlerTyp = name; s.strahlerNr = nr; s.strahlerId = produktId; autosave(); renderSchaltungen(); }
         });
         sp.classList.add("unter-auswahl");
         zaehler.appendChild(sp);
+        const teile = strahlerTeile(s);
+        if (teile.length) {
+          const h = document.createElement("p");
+          h.className = "hint kombi-hinweis";
+          h.textContent = "Kombination je Strahler: " + teile.map((t) => `${t.menge > 1 ? t.menge + "× " : ""}${t.name}`).join(" + ");
+          zaehler.appendChild(h);
+        }
       }
     }
     // LED-Stripes (v15): beliebig viele je Schaltung, Meter + Typ
@@ -1649,6 +1663,13 @@ function komponentenZeilen(liste, typen, mitGruppen) {
   return zeilen;
 }
 
+// v18.5: Teile, wenn der gewählte Strahler-Typ eine Kombination ist
+function strahlerTeile(s) {
+  if (typeof findeKombi !== "function" || !(s.strahlerTyp || "").trim()) return [];
+  const k = findeKombi("sys:strahler", s.strahlerTyp, s.strahlerId);
+  return k ? k.teile : [];
+}
+
 function strahlerZeile(s) {
   const typ = (s.strahlerTyp || "").trim();
   return "Strahler" + (typ ? ` – ${typ}` : "");
@@ -1685,7 +1706,10 @@ function bauRaumZeilen(b, raum) {
       if (t.melder && s.melderAnzahl > 0) zeilen.push({ b: melderZeile(s), nr: s.melderNr || "", menge: s.melderAnzahl, e: "Stck", unter: true });
       for (const a of BAU_AUSLAESSE) {
         if (!(s[a.key] > 0)) continue;
-        if (a.key === "strahler") zeilen.push({ b: strahlerZeile(s), nr: s.strahlerNr || "", menge: s[a.key], e: "Stck", unter: true });
+        if (a.key === "strahler") {
+          zeilen.push({ b: strahlerZeile(s), nr: s.strahlerNr || "", menge: s[a.key], e: "Stck", unter: true });
+          for (const t of strahlerTeile(s)) zeilen.push({ b: t.name, nr: t.nr || "", menge: rundeMenge(s[a.key] * (t.menge || 1)), e: "Stck", unter2: true });
+        }
         else zeilen.push({ b: a.b, menge: s[a.key], e: "Stck", unter: true });
       }
       for (const st of s.stripes || []) {
@@ -1777,6 +1801,7 @@ function summenMap() {
 function bauGesamtZeilen(b) {
   const schaltungen = summenMap();
   const stromkreise = summenMap();
+  const kombiTeile = summenMap(); // v18.5: Teile der Strahler-Kombinationen
   const melderHA = summenMap();
   const auslaesseSM = summenMap();
   const stripes = summenMap();
@@ -1811,7 +1836,10 @@ function bauGesamtZeilen(b) {
         if (st.melder) melderHA.add(melderZeile(s), s.melderAnzahl || 0, "Stck", s.melderNr);
         BAU_AUSLAESSE.forEach((a, idx) => {
           if (!(s[a.key] > 0)) return;
-          if (a.key === "strahler") auslaesseSM.add(strahlerZeile(s), s[a.key], "Stck", s.strahlerNr, idx);
+          if (a.key === "strahler") {
+            auslaesseSM.add(strahlerZeile(s), s[a.key], "Stck", s.strahlerNr, idx);
+            for (const t of strahlerTeile(s)) kombiTeile.add(t.name, rundeMenge(s[a.key] * (t.menge || 1)), "Stck", t.nr);
+          }
           else auslaesseSM.add(a.b, s[a.key], "Stck", "", idx);
         });
         for (const x of s.stripes || []) if (x.meter > 0) stripes.add(stripeZeile(x), x.meter, stripeEinheit(x), x.nr);
@@ -1855,6 +1883,7 @@ function bauGesamtZeilen(b) {
   if (stromkreise.size) zeilen.push({ gruppe: "Stromkreise (KNX)" }, ...stromkreise.zeilen());
   if (melderHA.size) zeilen.push({ gruppe: "Beleuchtung – Melder (Handautomatik)" }, ...melderHA.zeilen());
   if (auslaesseSM.size) zeilen.push({ gruppe: "Beleuchtung – Auslässe" }, ...auslaesseSM.zeilen());
+  if (kombiTeile.size) zeilen.push({ gruppe: "Strahler – Bestandteile (Kombinationen)" }, ...kombiTeile.zeilen());
   if (stripes.size) zeilen.push({ gruppe: "Beleuchtung – LED-Stripes" }, ...stripes.zeilen());
   if (rollo.size) zeilen.push({ gruppe: "Rollos" }, ...rollo.zeilen());
   if (knx.size) zeilen.push({ gruppe: "KNX (Räume)" }, ...knx.zeilen());
@@ -1880,7 +1909,7 @@ function zeilenZuAutoTable(zeilen) {
     }
     // Standardschrift des PDFs kennt kein „²“ -> „qmm“
     const text = String(z.b).replace(/mm²/g, "qmm").replace(/²/g, "2");
-    const bez = z.unter ? "      " + text : text;
+    const bez = z.unter2 ? "            " + text : z.unter ? "      " + text : text;
     const style = z.schaltung ? { fontStyle: "bold" } : {};
     return [
       { content: bez, styles: style },
